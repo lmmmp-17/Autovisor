@@ -4,6 +4,10 @@ import threading
 import time
 import traceback
 
+from modules.console import ensure_cjk_safe_stdio
+
+ensure_cjk_safe_stdio()
+
 # 用于在记录日志来源时跳过日志系统自身的栈帧
 _LOGGER_FILE = os.path.basename(__file__)
 

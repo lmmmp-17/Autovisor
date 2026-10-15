@@ -5,6 +5,10 @@ import os
 import re
 import sys
 
+from modules.console import ensure_cjk_safe_stdio
+
+ensure_cjk_safe_stdio()
+
 
 class ConfigError(Exception):
     pass
