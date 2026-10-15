@@ -1,16 +1,15 @@
 # encoding=utf-8
 import argparse
 import asyncio
-import ctypes
 import os
 import platform
 import sys
 import time
 
-from playwright.async_api import BrowserContext, Page, Playwright, TimeoutError, async_playwright
+from playwright.async_api import BrowserContext, Page, TimeoutError, async_playwright
 from playwright._impl._errors import TargetClosedError
 
-from modules import installer, updater
+from modules import human, installer, updater
 from modules.banner import print_banner
 from modules.configs import Config, ConfigError
 from modules.course_runner import (
@@ -18,6 +17,7 @@ from modules.course_runner import (
     detect_catalog_after_verification,
     run_course,
 )
+from modules.browser import create_browser_session
 from modules.diagnostics import check_browser, check_course
 from modules.login import (
     LOGIN_PASSWORD_SELECTOR,
@@ -25,9 +25,11 @@ from modules.login import (
     LOGIN_USERNAME_SELECTOR,
     accept_login_terms,
     is_login_page,
+    type_like_human,
     wait_for_login_complete,
 )
 from modules.logger import Logger
+from modules.pointer import human_click
 from modules.slider import slider_verify
 from modules.support import show_donate
 from modules.tasks import (
@@ -63,6 +65,8 @@ ZHS_COOKIE_URLS = [
 
 
 _saved_cookies = None
+# 连接用户自己的 Chrome 时关掉: 不能把用户真实浏览器里的登录凭证落盘
+_persist_cookies = True
 
 
 def _cookies_signature(cookies):
@@ -79,6 +83,11 @@ def _cookies_signature(cookies):
     )
 
 
+def set_cookie_persistence(enabled: bool) -> None:
+    global _persist_cookies
+    _persist_cookies = enabled
+
+
 def remember_login_cookies(cookies) -> None:
     """记录已经落盘的凭证, 用于跳过重复写入。"""
     global _saved_cookies
@@ -88,6 +97,8 @@ def remember_login_cookies(cookies) -> None:
 async def persist_login_cookies(context: BrowserContext) -> None:
     """凭证有变化时才写盘: 登录完成、Cookie 续期后立即保存, 中断也不丢。"""
     global _saved_cookies
+    if not _persist_cookies:
+        return
     cookies = await context.cookies(ZHS_COOKIE_URLS)
     signature = _cookies_signature(cookies)
     if signature is None or signature == _saved_cookies:
@@ -101,61 +112,6 @@ async def persist_login_cookies(context: BrowserContext) -> None:
     logger.event("保存登录凭证", 条数=len(cookies), 文件=COOKIE_PATH)
 
 
-def get_screen_size():
-    if os.name == "nt":
-        user32 = ctypes.windll.user32
-        return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-    return 1920, 1080
-
-
-async def init_page(p: Playwright, config, cookies) -> tuple[Page, BrowserContext]:
-    driver = "msedge" if config.driver == "edge" else config.driver
-    logger.info(f"正在启动{config.driver}浏览器...")
-    screen_width, screen_height = get_screen_size()
-    logger.event(
-        "启动浏览器",
-        驱动=config.driver,
-        通道=driver,
-        可执行文件=config.exe_path or "默认",
-        窗口大小=f"{screen_width}x{screen_height}",
-    )
-    launch_args = {
-        "channel": driver,
-        "headless": False,
-        "executable_path": config.exe_path if config.exe_path else None,
-        "args": [
-            "--start-maximized",
-            f"--window-size={screen_width},{screen_height}",
-            "--window-position=0,0",
-        ],
-    }
-    try:
-        browser = await p.chromium.launch(**launch_args)
-    except TargetClosedError as exc:
-        logger.log_exception("首次启动浏览器失败,准备重试.", exc)
-        logger.info("检测到浏览器首次启动失败,正在重试...")
-        await asyncio.sleep(1)
-        browser = await p.chromium.launch(**launch_args)
-    logger.event("浏览器已启动", 版本=getattr(browser, "version", "未知"))
-    # 使用真实窗口尺寸，避免 Playwright 默认 viewport 覆盖最大化窗口。
-    context = await browser.new_context(viewport=None)
-    if cookies:
-        await context.add_cookies(cookies)
-        logger.info("已加载 Cookies!")
-    else:
-        logger.info("未找到 Cookies,将跳转至登录页.")
-    page = await context.new_page()
-    logger.debug(f"{config.driver}浏览器启动完成.")
-    # 抹去特征
-    with open(get_runtime_path("resources", "stealth.min.js"), 'r') as f:
-        js = f.read()
-    await page.add_init_script(js)
-    logger.debug("stealth.js执行完成.")
-    page.set_default_timeout(24 * 3600 * 1000)
-
-    return page, context
-
-
 async def auto_login(context: BrowserContext, page: Page, config, modules=None) -> None:
     wait_start = time.time()
     await page.goto(config.login_url, wait_until="commit")
@@ -165,21 +121,22 @@ async def auto_login(context: BrowserContext, page: Page, config, modules=None) 
 
     if config.username and config.password:
         try:
-            username = await page.wait_for_selector(
+            await page.wait_for_selector(
                 LOGIN_USERNAME_SELECTOR, state="visible", timeout=30000
             )
-            password = await page.wait_for_selector(
+            await page.wait_for_selector(
                 LOGIN_PASSWORD_SELECTOR, state="visible", timeout=30000
             )
             logger.event("自动登录", 方式="账号密码", 账号="已填写")
-            await username.fill(config.username)
-            await password.fill(config.password)
+            await type_like_human(page.locator(LOGIN_USERNAME_SELECTOR).filter(visible=True).first, config.username)
+            await human.sleep_between(0.4, 1.2)
+            await type_like_human(page.locator(LOGIN_PASSWORD_SELECTOR).filter(visible=True).first, config.password)
             await accept_login_terms(page)
-            submit = await page.wait_for_selector(
+            await page.wait_for_selector(
                 LOGIN_SUBMIT_SELECTOR, state="visible", timeout=30000
             )
-            await page.wait_for_timeout(500)
-            await submit.click()
+            await human.sleep_between(0.35, 0.9)
+            await human_click(page.locator(LOGIN_SUBMIT_SELECTOR).filter(visible=True).first, timeout=30000)
         except TimeoutError:
             if is_login_page(page.url):
                 logger.warn("未找到自动登录控件,请在浏览器中手动完成登录.", shift=True)
@@ -245,10 +202,18 @@ async def main(config) -> bool:
 
     logger.section("登录")
     async with async_playwright() as p:
-        cookies = load_cookies(COOKIE_PATH)
+        # 连接已有 Chrome 时沿用它自己的登录态, 不往里灌本地 Cookie
+        cookies = None if config.attach_existing_chrome else load_cookies(COOKIE_PATH)
         remember_login_cookies(cookies)
         logger.event("本地凭证", 数量=len(cookies) if cookies else 0, 文件=COOKIE_PATH)
-        page, context = await init_page(p, config, cookies)
+        # PR #149 合并时冲突解决丢掉了这里的 create_browser_session, 之后
+        # attachExistingChrome 在正式运行中一直被静默忽略, 只有 --diagnose 认它。
+        session = await asyncio.wait_for(
+            create_browser_session(p, config, cookies, logger), timeout=45
+        )
+        page, context = session.page, session.context
+        # 登录完成、每门课结束、退出时都会保存 Cookie, 统一在这里按模式开关
+        set_cookie_persistence(not session.attached)
         monitor_task = None
         try:
             login_by_cookie = await ensure_login(context, page, cookies, config, modules)
@@ -268,8 +233,10 @@ async def main(config) -> bool:
                 "后台任务启动",
                 任务=", ".join(task.get_coro().__name__ for task in tasks),
             )
-            if config.enableHideWindow:
+            if config.enableHideWindow and not session.attached:
                 await hide_window(page)
+            elif config.enableHideWindow:
+                logger.info("已连接现有 Chrome, 不隐藏用户自己的浏览器窗口.")
             monitor_task = asyncio.create_task(task_monitor(tasks))
 
             course_total = len(config.course_urls)
@@ -331,13 +298,12 @@ async def main(config) -> bool:
             if monitor_task:
                 await asyncio.gather(monitor_task, return_exceptions=True)
             try:
-                await persist_login_cookies(context)
+                if not session.attached:
+                    await persist_login_cookies(context)
             except Exception as exc:
                 logger.log_exception("刷新登录 Cookies 失败.", exc)
-            try:
-                await context.browser.close()
-            except TargetClosedError:
-                pass
+            finally:
+                await session.close()
 
     logger.section("任务结束")
     logger.event(
@@ -448,7 +414,11 @@ def cli() -> int:
         exit_code = 1
     except ConfigError as exc:
         logger.error(f"配置文件无效: {exc}", shift=True)
-        logger.info("请完整解压发行包，并确保 config.ini 与 Autovisor.exe 位于同一目录。")
+        if getattr(sys, "frozen", False):
+            logger.info("请完整解压发行包，并确保 config.ini 与 Autovisor.exe 位于同一目录。")
+        else:
+            logger.info("源码运行请先从模板复制配置: macOS 用 config.macos.ini.example, "
+                        "Linux 用 config.linux.ini.example, Windows 用 config.ini.example。")
         exit_code = 1
     except Exception as exc:
         logger.log_exception("程序运行时出现未处理异常.", exc, shift=True)

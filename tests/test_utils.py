@@ -182,28 +182,123 @@ class OptionalElementTests(LoggerPatchMixin, unittest.IsolatedAsyncioTestCase):
 class OptimizePageTests(LoggerPatchMixin, unittest.IsolatedAsyncioTestCase):
     async def test_legacy_popup_wait_is_bounded(self):
         page = _OptionalLocatorPage()
-        config = mock.Mock(pop_js="document.getElementsByClassName('x')[0].click();")
+        config = mock.Mock()
         catalog = mock.Mock()
         catalog.name = "legacy"
-        evaluate_js = mock.AsyncMock()
-        with mock.patch.object(utils, "evaluate_js", evaluate_js), mock.patch.object(
+        click_optional = mock.AsyncMock()
+        with mock.patch.object(utils, "click_optional", click_optional), mock.patch.object(
             utils, "evaluate_on_element", mock.AsyncMock()
         ):
             await utils.optimize_page(page, config, catalog)
-        evaluate_js.assert_awaited_once()
-        args, kwargs = evaluate_js.await_args
+        args, kwargs = click_optional.await_args_list[0]
         self.assertEqual(args[1], ".studytime-div")
+        self.assertEqual(args[2], ".iconfont.iconguanbi")
         self.assertEqual(kwargs.get("timeout"), utils.OPTIONAL_POPUP_TIMEOUT_MS)
 
     async def test_modern_catalog_skips_legacy_popup(self):
         page = _OptionalLocatorPage()
-        config = mock.Mock(pop_js="close()")
+        config = mock.Mock()
         catalog = mock.Mock()
         catalog.name = "hike"
-        evaluate_js = mock.AsyncMock()
-        with mock.patch.object(utils, "evaluate_js", evaluate_js):
+        click_optional = mock.AsyncMock()
+        with mock.patch.object(utils, "click_optional", click_optional):
             await utils.optimize_page(page, config, catalog)
-        evaluate_js.assert_not_awaited()
+        click_optional.assert_not_awaited()
+
+
+class _ClickPage:
+    """click_optional 用的页面替身: 记录等待与点击目标"""
+
+    def __init__(self, wait_error=None):
+        self.wait_error = wait_error
+        self.waited = []
+        self.located = []
+
+    async def wait_for_selector(self, selector, timeout=None):
+        self.waited.append((selector, timeout))
+        if self.wait_error:
+            raise self.wait_error
+
+    def locator(self, selector):
+        self.located.append(selector)
+        return mock.Mock(first=f"first:{selector}")
+
+
+class ClickOptionalTests(LoggerPatchMixin, unittest.IsolatedAsyncioTestCase):
+    async def test_clicks_with_real_input_instead_of_page_script(self):
+        page = _ClickPage()
+        human_click = mock.AsyncMock()
+        with mock.patch.object(utils, "human_click", human_click):
+            clicked = await utils.click_optional(page, ".studytime-div", ".iconfont.iconguanbi", 1500)
+        self.assertTrue(clicked)
+        self.assertEqual(page.waited, [(".studytime-div", 1500)])
+        # 只点可见的那一个, 而不是 DOM 里第一个(可能是隐藏节点)
+        self.assertEqual(page.located, [".iconfont.iconguanbi:visible"])
+        human_click.assert_awaited_once_with("first:.iconfont.iconguanbi:visible", timeout=1500)
+
+    async def test_absent_popup_is_skipped_quietly(self):
+        page = _ClickPage(wait_error=PlaywrightTimeoutError("not there"))
+        human_click = mock.AsyncMock()
+        with mock.patch.object(utils, "human_click", human_click):
+            clicked = await utils.click_optional(page, ".studytime-div", ".x", 1500)
+        self.assertFalse(clicked)
+        human_click.assert_not_awaited()
+        self.assertEqual(self.logger.exceptions, [])
+
+
+class _Window:
+    def __init__(self, title):
+        self.title = title
+
+
+class _Windows:
+    def __init__(self, titles):
+        self.titles = titles
+
+    def getWindowsWithTitle(self, needle):
+        return [_Window(t) for t in self.titles() if needle in t]
+
+
+class _TitledPage:
+    def __init__(self, title):
+        self.title_value = title
+        self.history = [title]
+
+    async def wait_for_load_state(self, *_args, **_kwargs):
+        pass
+
+    async def title(self):
+        return self.title_value
+
+    async def evaluate(self, _script, arg=None):
+        self.title_value = arg
+        self.history.append(arg)
+
+    async def wait_for_timeout(self, _ms):
+        pass
+
+
+class BrowserWindowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unique_page_title_leaves_document_untouched(self):
+        page = _TitledPage("智慧树-学习")
+        windows = _Windows(lambda: ["智慧树-学习 - Microsoft Edge", "记事本"])
+        window = await utils.get_browser_window(page, windows=windows)
+        self.assertEqual(window.title, "智慧树-学习 - Microsoft Edge")
+        self.assertEqual(page.history, ["智慧树-学习"])
+
+    async def test_ambiguous_title_uses_random_token_and_restores(self):
+        page = _TitledPage("智慧树-学习")
+        windows = _Windows(lambda: [
+            f"{page.title_value} - Microsoft Edge",
+            "智慧树-学习 - Google Chrome",
+        ])
+        window = await utils.get_browser_window(page, windows=windows)
+        self.assertIsNotNone(window)
+        token = page.history[1]
+        # 以前写进去的是工具名 "Autovisor - Playwright", 页面一读就知道
+        self.assertNotIn("Autovisor", token)
+        self.assertNotIn("Playwright", token)
+        self.assertEqual(page.history[-1], "智慧树-学习")
 
 
 if __name__ == "__main__":

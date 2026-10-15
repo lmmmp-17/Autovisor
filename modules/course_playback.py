@@ -15,6 +15,7 @@ from modules.tasks import (
     has_visible_verification,
     wait_until_verification_hidden,
 )
+from modules import human
 from modules.utils import get_video_attr, run_on
 from modules.fusion_adapter import FusionAdapter
 from modules.video_state import (
@@ -127,7 +128,7 @@ async def learn_lesson(
 
             catalog_progress = await lesson_progress(current_lesson, catalog)
             if catalog_progress >= 100:
-                await page.wait_for_timeout(2000)
+                await human.sleep(2.0)
                 completed = await wait_for_lesson_completion(
                     current_lesson, catalog, timeout_ms=5000
                 )
@@ -210,7 +211,7 @@ async def learn_lesson(
                 synced_to_catalog = True
 
                 if video_at_end(current_time, total_time):
-                    await page.wait_for_timeout(3000)
+                    await human.sleep(3.0)
                     if await has_visible_verification(page):
                         wait_start = time.time()
                         await wait_until_verification_hidden(page)
@@ -287,7 +288,7 @@ async def learn_lesson(
             show_course_progress(
                 desc="平台记录进度:", cur_time=f"{catalog_progress}%"
             )
-            await asyncio.sleep(0.5)
+            await human.sleep(0.5)
         except TargetClosedError:
             return paused_time, False, False
         except TimeoutError as exc:
@@ -392,7 +393,7 @@ async def review_lesson(
                 cur_time=elapsed_minutes(start_time, paused_before + paused_time),
                 limit_time=config.limitMaxTime,
             )
-            await asyncio.sleep(0.5)
+            await human.sleep(0.5)
         except TargetClosedError:
             return paused_time, False, False
         except TimeoutError as exc:

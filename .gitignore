@@ -5,7 +5,6 @@ data/*
 resources/*
 !data/mirrors.json
 !resources/QRcode.jpg
-!resources/stealth.min.js
 !resources/zhs.ico
 !resources/markdown/
 .obsidian/

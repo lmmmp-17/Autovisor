@@ -1,12 +1,14 @@
 import json
 import os
 import os.path
+import secrets
 import sys
 import tempfile
 from playwright.async_api import Page, Locator
 from playwright.async_api import TimeoutError
 from playwright._impl._errors import TargetClosedError
 from modules.configs import Config
+from modules.pointer import human_click
 from modules.lesson_navigation import (
     CatalogSelectors,
     get_lesson_title,
@@ -65,7 +67,7 @@ def save_cookies(cookies, filename="cookies.json"):
 def load_cookies(filename="cookies.json"):
     """从文件加载 Cookies"""
     try:
-        with open(filename, 'r') as f:
+        with open(filename, 'r', encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return None
@@ -151,9 +153,19 @@ async def display_window(page: Page) -> None:
         logger.warn("未找到播放窗口!")
 
 
+def platform_name() -> str:
+    return {"win32": "Windows", "darwin": "macOS"}.get(sys.platform, "Linux")
+
+
 async def hide_window(page: Page) -> None:
     if sys.platform != "win32":
-        logger.warn("macOS 不支持隐藏单个 Chrome 窗口,将保持可见以便处理验证.")
+        # 不用最小化代替隐藏: 最小化后 document.visibilityState 变成 hidden,
+        # 播放器会据此暂停。焦点模拟已经让失焦不触发 blur, 把窗口放到其它
+        # 窗口后面、或挪到另一个工作区就够了。
+        logger.warn(
+            f"{platform_name()} 不支持隐藏单个浏览器窗口. 可以把窗口放到其它窗口后面"
+            "或挪到另一个工作区, 失焦不会打断播放; 不要最小化."
+        )
         return
     window = await get_browser_window(page)
     if window:
@@ -163,19 +175,32 @@ async def hide_window(page: Page) -> None:
         logger.warn("未找到播放窗口!")
 
 
-async def get_browser_window(page: Page) -> object | None:
-    if sys.platform != "win32":
+async def get_browser_window(page: Page, windows=None) -> object | None:
+    """按标题找到播放页所在的系统窗口。
+
+    以前会把页面标题直接改成 "Autovisor - Playwright" 再去匹配——页面脚本读
+    document.title 就能看到工具名, MutationObserver 也能看到 <title> 被改。
+    现在先用页面自己的标题匹配, 只有匹配不唯一(比如用户另开了同一个课程页)
+    时才临时换成随机串定位, 定位完立刻改回原标题。
+    """
+    if sys.platform != "win32" and windows is None:
         return None
-    custom_title = "Autovisor - Playwright"
+    windows = windows or gw
     await page.wait_for_load_state("domcontentloaded")
-    await page.evaluate(f'document.title = "{custom_title}"')
-    # 获取所有窗口并尝试匹配 Playwright 窗口
-    await page.wait_for_timeout(1000)
-    win_list = gw.getWindowsWithTitle(custom_title)
-    if win_list:
-        return win_list[0]
-    else:
-        return None
+    original = await page.title()
+    if original:
+        matches = windows.getWindowsWithTitle(original)
+        if len(matches) == 1:
+            return matches[0]
+
+    token = f"av-{secrets.token_hex(6)}"
+    await page.evaluate("t => { document.title = t; }", token)
+    try:
+        await page.wait_for_timeout(1000)
+        matches = windows.getWindowsWithTitle(token)
+        return matches[0] if matches else None
+    finally:
+        await page.evaluate("t => { document.title = t; }", original)
 
 
 async def evaluate_js(page: Page, wait_selector, js: str, timeout=None, is_hike_class=False) -> None:
@@ -225,6 +250,34 @@ async def evaluate_on_element(page: Page, selector: str, js: str, timeout: float
         return
 
 
+async def click_optional(
+    page: Page, wait_selector: str | None, click_selector: str, timeout: float
+) -> bool:
+    """可选元素(弹窗等)出现时用真实输入点一下, 没出现就在 timeout 内跳过。
+
+    以前在页面里执行 el.click(): 那样派发的事件 isTrusted 恒为 false, 页面只要
+    写一行 if (!e.isTrusted) return 就能把它挡掉, 也能据此认出脚本。
+    """
+    try:
+        if wait_selector:
+            await page.wait_for_selector(wait_selector, timeout=timeout)
+        target = page.locator(f"{click_selector}:visible").first
+        await human_click(target, timeout=timeout)
+        return True
+    except TargetClosedError as e:
+        logger.debug(f"浏览器关闭时停止点击: {logger.summarize_exception(e)}")
+        return False
+    except TimeoutError:
+        logger.debug_throttled(
+            f"click_optional:{click_selector}",
+            f"可选点击跳过: 等待元素超时 {wait_selector or click_selector}",
+        )
+        return False
+    except Exception as e:
+        logger.log_exception(f"可选点击失败. Selector: {click_selector}", e)
+        return False
+
+
 async def optimize_page(
     page: Page, config: Config, catalog: CatalogSelectors
 ) -> None:
@@ -234,21 +287,21 @@ async def optimize_page(
             ".ss2077-custom-title > img.icon"
         ).first
         if await preread_close.count() and await preread_close.is_visible():
-            await preread_close.click(timeout=2000)
+            await human_click(preread_close, timeout=2000)
             logger.info("已关闭学前必读弹窗.")
 
         if catalog.name == "legacy":
             # "学习时长/学前必读"弹窗(.studytime-div)只在未读过时显示: 节点常驻 DOM,
             # 平台不提示时它是 0x0 的隐藏节点, 等它可见会一直等下去。
-            await evaluate_js(
+            await click_optional(
                 page,
                 ".studytime-div",
-                config.pop_js,
+                ".iconfont.iconguanbi",
                 timeout=OPTIONAL_POPUP_TIMEOUT_MS,
             )
             hour = time.localtime().tm_hour
             if hour >= 18 or hour < 7:
-                await evaluate_on_element(page, ".Patternbtn-div", "el=>el.click()", timeout=1500)
+                await click_optional(page, None, ".Patternbtn-div", timeout=1500)
             await evaluate_on_element(page, ".exploreTip", "el=>el.remove()", timeout=1500)
             await evaluate_on_element(page, ".ai-helper-Index2", "el=>el.remove()", timeout=1500)
             await evaluate_on_element(page, ".aiMsg.once", "el=>el.remove()", timeout=1500)

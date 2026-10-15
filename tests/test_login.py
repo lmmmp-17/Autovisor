@@ -2,7 +2,6 @@ import unittest
 
 from modules.login import is_login_page
 from modules.slider import image_to_display_point
-from Autovisor import init_page
 
 
 class LoginUrlTests(unittest.TestCase):
@@ -22,12 +21,6 @@ class LoginUrlTests(unittest.TestCase):
             image_to_display_point((240, 120), 480, 240, 400, 200),
             (200, 100),
         )
-
-    def test_browser_starts_maximized(self):
-        args = init_page.__code__.co_consts
-        self.assertIn("--start-maximized", args)
-        self.assertIn("--window-position=0,0", args)
-        self.assertIn(("viewport",), args)
 
 
 if __name__ == "__main__":

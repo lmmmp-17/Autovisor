@@ -40,6 +40,8 @@ class CookiePersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.logger_patch.stop)
         self.addCleanup(self.save_patch.stop)
         Autovisor.remember_login_cookies(None)
+        Autovisor.set_cookie_persistence(True)
+        self.addCleanup(Autovisor.set_cookie_persistence, True)
 
     async def test_saves_on_first_change(self):
         await Autovisor.persist_login_cookies(_Context([_cookie("a")]))
@@ -86,6 +88,12 @@ class CookiePersistenceTests(unittest.IsolatedAsyncioTestCase):
         await Autovisor.persist_login_cookies(context)
         self.assertEqual(self.save_cookies.call_count, 2)
         self.assertEqual(len(self.logger.events), 1)
+
+    async def test_attached_browser_cookies_are_never_written(self):
+        # 连接用户自己的 Chrome 时, 登录后、每门课后、退出时的保存都必须是空操作
+        Autovisor.set_cookie_persistence(False)
+        await Autovisor.persist_login_cookies(_Context([_cookie("SESSION")]))
+        self.save_cookies.assert_not_called()
 
 
 if __name__ == "__main__":

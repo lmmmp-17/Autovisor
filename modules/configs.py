@@ -36,8 +36,6 @@ class Config:
         self.login_url = "https://passport.zhihuishu.com/login"
         self.block_js = '''return document.getElementsByClassName("yidun_jigsaw")[0].src'''
         self.bg_js = '''return document.getElementsByClassName("yidun_bg-img")[0].src'''
-        # 弹窗
-        self.pop_js = '''document.getElementsByClassName("iconfont iconguanbi")[0].click();'''
 
         self.mirrors = self._read_mirrors(mirrors_path)
 

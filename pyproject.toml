@@ -11,7 +11,7 @@ requires-python = ">=3.10,<3.14"
 dependencies = [
     "httpx>=0.28,<1",
     "pillow>=10,<13",
-    "playwright>=1.49,<2",
+    "playwright>=1.51,<2",
     "pygetwindow>=0.0.9; platform_system == 'Windows'",
     "requests>=2.31,<3",
 ]

@@ -53,7 +53,6 @@ os.mkdir(f"./dist/{name}/data")
 shutil.copyfile("./resources/QRcode.jpg", f"./dist/{name}/resources/QRcode.jpg")
 shutil.copyfile("./config.ini.example", f"./dist/{name}/config.ini")
 shutil.copyfile("./data/mirrors.json", f"./dist/{name}/data/mirrors.json")
-shutil.copyfile("./resources/stealth.min.js", f"./dist/{name}/resources/stealth.min.js")
 
 # 稳定 ABI (abi3) 扩展(如 opencv 的 cv2.pyd)依赖 python3.dll,
 # PyInstaller 不会自动收集,必须随包提供,否则运行时报 "DLL load failed while importing cv2".

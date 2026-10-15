@@ -1,10 +1,14 @@
 import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from modules.browser import (
+    AUTOMATION_DEFAULT_ARGS,
+    FOCUS_STEPS,
     BrowserSession,
+    _launch_args,
     create_browser_session,
     get_effective_driver,
     is_loopback_cdp_endpoint,
@@ -53,10 +57,26 @@ class BrowserResolutionTests(unittest.TestCase):
         self.assertFalse(is_loopback_cdp_endpoint("ws://example.com:9222/devtools/browser/x"))
 
 
+class _CDPSession:
+    def __init__(self, unsupported=()):
+        self.sent = []
+        self.unsupported = set(unsupported)
+
+    async def send(self, method, params=None):
+        if method in self.unsupported:
+            raise RuntimeError(f"'{method}' wasn't found")
+        self.sent.append((method, params))
+        if method == "Browser.getWindowForTarget":
+            return {"windowId": 7}
+        return {}
+
+
 class _Page:
-    def __init__(self):
+    def __init__(self, context=None):
         self.closed = False
         self.timeout = None
+        self.init_scripts = []
+        self.context = context
 
     async def close(self):
         self.closed = True
@@ -64,25 +84,40 @@ class _Page:
     def is_closed(self):
         return self.closed
 
-    async def add_init_script(self, **_kwargs):
-        pass
+    async def add_init_script(self, *args, **kwargs):
+        self.init_scripts.append((args, kwargs))
 
     def set_default_timeout(self, timeout):
         self.timeout = timeout
 
 
 class _Context:
-    def __init__(self):
-        self.page = _Page()
+    def __init__(self, unsupported=()):
+        self.cdp = _CDPSession(unsupported)
+        self.page = _Page(self)
+        self.cookies = None
 
     async def new_page(self):
         return self.page
+
+    async def new_cdp_session(self, page):
+        assert page is self.page
+        return self.cdp
+
+    async def add_cookies(self, cookies):
+        self.cookies = cookies
 
 
 class _Browser:
     def __init__(self):
         self.contexts = [_Context()]
         self.closed = False
+        self.context_kwargs = None
+        self.version = "test"
+
+    async def new_context(self, **kwargs):
+        self.context_kwargs = kwargs
+        return self.contexts[0]
 
     async def close(self):
         self.closed = True
@@ -95,6 +130,10 @@ class _Chromium:
 
     async def connect_over_cdp(self, url):
         self.cdp_url = url
+        return self.browser
+
+    async def launch(self, **kwargs):
+        self.launch_kwargs = kwargs
         return self.browser
 
 
@@ -110,15 +149,26 @@ class _Config:
     exe_path = ""
 
 
+class _OwnedConfig(_Config):
+    attach_existing_chrome = False
+
+
 class _Logger:
     def __init__(self, root):
         self.runtime_root = root
+        self.events = []
 
     def info(self, *_args, **_kwargs):
         pass
 
     def debug(self, *_args, **_kwargs):
         pass
+
+    def event(self, name, **fields):
+        self.events.append((name, fields))
+
+    def summarize_exception(self, exc):
+        return str(exc)
 
 
 class BrowserSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -138,3 +188,90 @@ class BrowserSessionTests(unittest.IsolatedAsyncioTestCase):
         session = BrowserSession(browser, browser.contexts[0], _Page(), False)
         await session.close()
         self.assertTrue(browser.closed)
+
+
+class LaunchArgsTests(unittest.TestCase):
+    def test_browser_starts_maximized(self):
+        args = _launch_args(_OwnedConfig())["args"]
+        self.assertIn("--start-maximized", args)
+
+    def test_window_size_only_comes_from_a_real_screen_size(self):
+        # 以前非 Windows 一律写死 1920x1080, 小屏幕上窗口会超出屏幕
+        with unittest.mock.patch("modules.browser.get_screen_size", return_value=None):
+            args = _launch_args(_OwnedConfig())["args"]
+        self.assertFalse([a for a in args if a.startswith("--window-size")])
+        with unittest.mock.patch("modules.browser.get_screen_size", return_value=(2560, 1440)):
+            args = _launch_args(_OwnedConfig())["args"]
+        self.assertIn("--window-size=2560,1440", args)
+        self.assertIn("--window-position=0,0", args)
+
+    def test_automation_flag_is_dropped_at_launch(self):
+        # 不带 --enable-automation, 并关掉 AutomationControlled:
+        # navigator.webdriver 才是原生的 false, 而不是靠脚本删掉属性得到的 undefined
+        launch = _launch_args(_OwnedConfig())
+        self.assertEqual(launch["ignore_default_args"], AUTOMATION_DEFAULT_ARGS)
+        self.assertIn("--enable-automation", launch["ignore_default_args"])
+        self.assertIn("--disable-blink-features=AutomationControlled", launch["args"])
+
+    def test_never_headless(self):
+        self.assertIs(_launch_args(_OwnedConfig())["headless"], False)
+
+
+class PreparePageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_owned_session_uses_window_sized_viewport_and_injects_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            playwright = _Playwright()
+            session = await create_browser_session(
+                playwright, _OwnedConfig(), [{"name": "a"}], _Logger(root)
+            )
+            self.assertFalse(session.attached)
+            # Python 版里 viewport=None 等于没传, 视口与 screen 仍被模拟成 1280x720
+            self.assertEqual(playwright.chromium.browser.context_kwargs, {"no_viewport": True})
+            self.assertIn(
+                ("Browser.setWindowBounds", {"windowId": 7, "bounds": {"windowState": "maximized"}}),
+                session.context.cdp.sent,
+            )
+            # stealth.min.js 已移除: 页面里不再注入任何脚本
+            self.assertEqual(session.page.init_scripts, [])
+            self.assertEqual(session.context.cookies, [{"name": "a"}])
+
+    async def test_attached_session_injects_nothing_and_leaves_the_window_alone(self):
+        with tempfile.TemporaryDirectory() as root:
+            session = await create_browser_session(
+                _Playwright(), _Config(), None, _Logger(root)
+            )
+            self.assertEqual(session.page.init_scripts, [])
+            sent = [method for method, _ in session.context.cdp.sent]
+            self.assertNotIn("Browser.setWindowBounds", sent, "不能替用户改他自己浏览器的窗口")
+
+    async def test_focus_emulation_is_applied(self):
+        with tempfile.TemporaryDirectory() as root:
+            logger = _Logger(root)
+            session = await create_browser_session(_Playwright(), _Config(), None, logger)
+            sent = [method for method, _ in session.context.cdp.sent]
+            self.assertEqual(sent, [method for _, method, _ in FOCUS_STEPS])
+            self.assertIn(("Emulation.setFocusEmulationEnabled", {"enabled": True}),
+                          session.context.cdp.sent)
+            self.assertIn("焦点模拟", [name for name, _ in logger.events])
+
+    async def test_missing_cdp_command_does_not_block_the_rest(self):
+        with tempfile.TemporaryDirectory() as root:
+            playwright = _Playwright()
+            playwright.chromium.browser.contexts = [_Context(unsupported={"Page.setWebLifecycleState"})]
+            session = await create_browser_session(playwright, _Config(), None, _Logger(root))
+            sent = [method for method, _ in session.context.cdp.sent]
+            self.assertIn("Emulation.setFocusEmulationEnabled", sent)
+            self.assertIn("Emulation.setIdleOverride", sent)
+            self.assertNotIn("Page.setWebLifecycleState", sent)
+
+
+class MainFlowWiringTests(unittest.TestCase):
+    def test_main_flow_goes_through_create_browser_session(self):
+        # PR #149 合并时冲突解决把主流程改回了自带的 init_page, attachExistingChrome
+        # 在正式运行里从此被静默忽略。主流程和诊断必须共用同一个启动入口。
+        source = (Path(__file__).resolve().parent.parent / "Autovisor.py").read_text(encoding="utf-8")
+        self.assertIn("create_browser_session(", source)
+        self.assertNotIn("def init_page", source)
+        self.assertNotIn("stealth", source)
+        # 连接模式下不能把用户真实浏览器的 Cookie 落盘
+        self.assertIn("if not session.attached:\n                    await persist_login_cookies", source)

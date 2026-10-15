@@ -25,7 +25,9 @@
 from playwright.async_api import Page
 from playwright._impl._errors import TargetClosedError
 
+from modules import human
 from modules.logger import Logger
+from modules.pointer import human_click
 
 logger = Logger()
 
@@ -35,6 +37,9 @@ _OPTION_SELECTOR = ".ai-class-exercise-dialog .option"
 _SUBMIT_SELECTOR = ".ai-class-exercise-dialog .el-dialog__footer button.el-button"
 # 折叠章节头(Element-UI collapse), 需展开以采集完整课时列表。
 COLLAPSE_HEADER_SELECTOR = ".el-collapse-item__header"
+_COLLAPSED_HEADER_SELECTOR = ".el-collapse-item:not(.is-active) > .el-collapse-item__header"
+# 单次点击的等待上限: 弹窗里的元素要么马上在, 要么不会再出现
+_CLICK_TIMEOUT_MS = 3000
 
 
 class FusionAdapter:
@@ -72,23 +77,26 @@ class FusionAdapter:
     @staticmethod
     async def expand_catalog(page: Page) -> int:
         """展开折叠目录里未激活的章节头, 返回展开个数。"""
+        # 以前在页面里批量执行 h.click(): 同一毫秒内展开所有章节, 事件还都是
+        # isTrusted=false。现在逐个真实点击, 点一个就重新数一次——点开之后
+        # 节点会带上 is-active, 剩余的折叠项随之变少。
+        # 点完数量没减少就立刻停: 否则会对同一个章节头反复点, 来回展开收起。
         try:
-            n = await page.evaluate(
-                """() => {
-                    let n = 0;
-                    document.querySelectorAll('.el-collapse-item').forEach(it => {
-                        if ((it.className||'').indexOf('is-active') < 0) {
-                            const h = it.querySelector('.el-collapse-item__header');
-                            if (h) { h.click(); n++; }
-                        }
-                    });
-                    return n;
-                }"""
-            )
+            collapsed = page.locator(_COLLAPSED_HEADER_SELECTOR)
+            n = 0
+            for _ in range(60):
+                before = await collapsed.count()
+                if not before:
+                    break
+                await human_click(collapsed.first, timeout=_CLICK_TIMEOUT_MS)
+                n += 1
+                await human.sleep_between(0.25, 0.7)
+                if await collapsed.count() >= before:
+                    logger.debug_throttled("fusion:expand_stall", "点击后折叠项没有减少, 停止展开")
+                    break
             if n:
-                await page.wait_for_timeout(400)
                 logger.debug(f"融合目录已展开 {n} 个折叠项")
-            return n or 0
+            return n
         except Exception as e:
             logger.debug_throttled(
                 "fusion:expand", f"展开折叠目录失败: {logger.summarize_exception(e)}"
@@ -123,28 +131,13 @@ class FusionAdapter:
             return False
         logger.info("检测到 AI随堂练习弹窗, 自动选择并提交.")
         try:
-            clicked = bool(
-                await page.evaluate(
-                    """() => {
-                        const opt = document.querySelector(%s);
-                        if (opt) { opt.click(); return true; }
-                        return false;
-                    }""" % ("'" + _OPTION_SELECTOR + "'",)
-                )
-            )
+            # 真实点击。以前是页面里的 opt.click() / btn.click(), 事件 isTrusted=false。
+            clicked = await _click_if_present(page, _OPTION_SELECTOR)
             if not clicked:
                 logger.debug_throttled("fusion:ai_opt", "未找到选项按钮")
-            await page.wait_for_timeout(600)
-            submitted = bool(
-                await page.evaluate(
-                    """() => {
-                        const btn = document.querySelector(%s);
-                        if (btn) { btn.click(); return true; }
-                        return false;
-                    }""" % ("'" + _SUBMIT_SELECTOR + "'",)
-                )
-            )
-            await page.wait_for_timeout(1000)
+            await human.sleep_between(0.5, 1.4)
+            submitted = await _click_if_present(page, _SUBMIT_SELECTOR)
+            await human.sleep_between(0.8, 1.6)
             logger.info("AI 随堂练习已自动提交关闭.")
             await FusionAdapter.resume_video(page)
             return bool(clicked or submitted)
@@ -156,3 +149,11 @@ class FusionAdapter:
                 "fusion:ai", f"AI随堂自动提交失败: {logger.summarize_exception(exc)}"
             )
             return False
+
+
+async def _click_if_present(page: Page, selector: str) -> bool:
+    target = page.locator(selector).first
+    if not await target.count():
+        return False
+    await human_click(target, timeout=_CLICK_TIMEOUT_MS)
+    return True

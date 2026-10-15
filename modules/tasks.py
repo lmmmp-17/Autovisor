@@ -4,6 +4,7 @@ import time
 from playwright.async_api import TimeoutError
 from playwright.async_api import Page
 from modules.configs import Config
+from modules import human
 from modules.utils import get_video_attr, display_window, hide_window, run_on
 from playwright._impl._errors import TargetClosedError
 from modules.logger import Logger
@@ -100,7 +101,7 @@ async def video_optimize(page: Page, config: Config) -> None:
     await page.wait_for_load_state("domcontentloaded")
     while True:
         try:
-            await asyncio.sleep(2)
+            await human.sleep(2.0)
             try:
                 await page.wait_for_selector("video", state="attached", timeout=3000)
             except TimeoutError:
@@ -157,7 +158,7 @@ async def play_video(
     await page.wait_for_load_state("domcontentloaded")
     while True:
         try:
-            await asyncio.sleep(2)
+            await human.sleep(2.0)
             try:
                 await page.wait_for_selector("video", state="attached", timeout=1000)
             except TimeoutError:
