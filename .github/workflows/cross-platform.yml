@@ -42,10 +42,21 @@ jobs:
       - name: Unit tests
         run: uv run python -m unittest discover -s tests -v
 
-  linux-launcher:
-    name: launcher (ubuntu-latest)
-    runs-on: ubuntu-latest
+  launcher:
+    name: launcher (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            entry: run.sh
+          # macOS 走旧入口, 顺带验证 run_macos.sh 这个包装脚本
+          - os: macos-latest
+            platform: macos
+            entry: run_macos.sh
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -57,18 +68,18 @@ jobs:
           enable-cache: true
 
       - name: Prepare config
-        run: cp config.linux.ini.example config.linux.ini
+        run: cp config.${{ matrix.platform }}.ini.example config.${{ matrix.platform }}.ini
 
       - name: First run deploys the environment
         run: |
-          out=$(bash ./run.sh --help)
+          out=$(bash ./${{ matrix.entry }} --help)
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -q "usage: Autovisor.py"
           test -f .autovisor/env.ready
-          test "$(stat -c '%a' config.linux.ini)" = "600"
+          python3 -c "import os, stat; m = stat.S_IMODE(os.stat('config.${{ matrix.platform }}.ini').st_mode); assert m == 0o600, oct(m)"
 
       - name: Second run reuses ready environment
         run: |
-          out=$(bash ./run.sh --help)
+          out=$(bash ./${{ matrix.entry }} --help)
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -q "环境已就绪"
