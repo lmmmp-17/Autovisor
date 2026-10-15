@@ -41,7 +41,8 @@
 - **支持隐藏窗口后台刷课**
 - 启动时自动检查更新
 - 后台实时更新学习进度
-- macOS 支持源码运行
+- macOS / Linux 支持源码运行
+- 页面侧不留自动化痕迹: 不注入脚本, 点击、滚动、输入都是浏览器生成的真实输入 (见 **六、降低自动化特征**)
 - 根据当前时间自动设置背景色(白天/夜晚)
 - 完成章节时提示已刷课时长
 - 各种自定义配置
@@ -77,21 +78,30 @@
 - `packages/`: 自动下载的 NumPy、OpenCV 等运行时依赖.
 - `data/`: 登录 Cookies 和镜像源配置.
 
-#### 三、macOS 源码运行
+#### 三、macOS / Linux 源码运行
 
-需要 macOS 11 (Big Sur) 及以上 (Apple Silicon / Intel 均可) 和系统 Chrome浏览器. 先复制模板并填写配置:
+- macOS: 需要 macOS 11 (Big Sur) 及以上 (Apple Silicon / Intel 均可) 和系统 Chrome 浏览器.
+- Linux: 需要已安装 Google Chrome (`google-chrome`) 或 Microsoft Edge; 也可以把 `driver` 设为 `Chromium`, 由脚本自动下载.
 
-```bash
-cp config.macos.ini.example config.macos.ini
-```
-
-打开 `config.macos.ini`, 填入课程链接 (账号密码可留空, 用浏览器手动登录), 然后运行:
+先复制对应平台的模板并填写配置:
 
 ```bash
-./run_macos.sh
+cp config.macos.ini.example config.macos.ini    # macOS
+cp config.linux.ini.example config.linux.ini    # Linux
 ```
 
-首次运行会自动部署环境 (安装 `uv`、依赖和必要的浏览器), 之后直接启动. 环境或配置变化时会自动重新部署, 也可用 `./run_macos.sh --setup` 强制重建.
+填入课程链接 (账号密码可留空, 用浏览器手动登录), 然后运行:
+
+```bash
+./run.sh
+```
+
+脚本会按系统自动选用 `config.macos.ini` 或 `config.linux.ini`, 也可以用 `--config` 指定. 首次运行会自动部署环境 (安装 `uv`、依赖和必要的浏览器), 之后直接启动. 环境或配置变化时会自动重新部署, 也可用 `./run.sh --setup` 强制重建. 旧的 `./run_macos.sh` 仍可使用.
+
+说明:
+
+- `enableHideWindow` 只在 Windows 上生效. macOS / Linux 上把浏览器窗口放到其它窗口后面、或挪到另一个工作区即可, 失焦不会打断播放; **不要最小化**, 最小化后页面会变成后台状态.
+- Linux 上用 `Chromium` 时若报缺少系统库, 执行 `sudo uv run playwright install-deps chromium`.
 
 #### 四、发行版下载
 
@@ -152,11 +162,44 @@ cp config.macos.ini.example config.macos.ini
 
     - 感谢您对本项目的支持~ 只需要设置 `showDonateCode = False` 就好了!
 
+#### 六、降低自动化特征
+
+以下每一项都在真实浏览器里实测过 (`tests/test_e2e_browser.py`):
+
+| 页面能读到的 | 改动前 | 现在 |
+| --- | --- | --- |
+| `navigator.webdriver` | `undefined` (stealth 把属性删了) | 原生的 `false` |
+| `'webdriver' in navigator` | `false` | `true` |
+| `navigator.languages` 等 getter | 被替换, 不是原生函数 | 原生 |
+| WebGL 显卡信息 | 写死成 Mac 的 `Intel Iris OpenGL Engine` | 本机真实显卡 |
+| `screen` / 视口 | 固定模拟成 1280x720, 会出现视口比窗口还大 | 跟随真实屏幕与窗口 |
+| 点击事件 `isTrusted` | 弹窗、协议勾选、融合课弹窗等处为 `false` | 全部为 `true` |
+| 点击轨迹 | 一步瞬移到元素正中心, 按下抬起 0 间隔 | 贝塞尔曲线移动, 落点靠中心但有偏差, 按住几十毫秒 |
+| 目录滚动 | 协议级滚动, 只有 scroll 没有 wheel | 真实滚轮 |
+| 账号密码 | `fill()` 一次写入, 没有按键事件 | 逐字输入 |
+| 页面标题 (Windows 隐藏窗口时) | 被改成 `Autovisor - Playwright` | 不改; 仅在标题匹配不唯一时临时换随机串并立即改回 |
+| 轮询节拍 | 每 2 秒 / 0.5 秒整 | 以基准值为中心抖动 |
+
+做法:
+
+- 不再注入 `stealth.min.js`. 在有界面的新版浏览器里它弊大于利 (见上表前四行), 改为启动时去掉 `--enable-automation` 并关闭 `AutomationControlled`.
+- 页面里的 `el.click()` 全部换成真实输入. 页面脚本派发的事件 `isTrusted` 恒为 `false`, 而且这个属性改不掉.
+- 启动后用 CDP 保持页面"前台、活跃": 不进入冻结状态, 空闲检测恒为活跃 (焦点模拟由 Playwright 默认开启).
+- 任何一步真实点击走不通 (元素被遮挡、拿不到尺寸), 都会退回 Playwright 原生点击, 不会比原来更容易卡住.
+
+还没处理、需要真实页面确认后再改的:
+
+- 倍速和静音仍是直接改 `video` 属性, 并同步改写播放器上的倍速 / 音量图标. 更自然的做法是点播放器自己的菜单, 需要对照真实播放器结构.
+- 视频暂停后的恢复、进度回退仍是页面脚本调用 `play()` / 设置 `currentTime`.
+- 几个提示浮层 (`.exploreTip` 等) 仍是直接从页面里删掉.
+
+**连接已有 Chrome (`attachExistingChrome = True`)** 是特征最低的方式: 用的是你自己的浏览器和登录态, 没有任何启动参数痕迹. 这个开关在 3.18.x 里只对 `--check-browser` 生效, 正式运行时被忽略 (合并 #149 时丢失), 现已恢复. 连接模式下不会把浏览器 Cookie 写进 `cookies.json`, 结束时只关闭自己打开的标签页, 也不会隐藏你的浏览器窗口.
+
 ------
 #### 已知问题
 
 - **长时间挂机**有概率弹出人机验证, 程序检测到后会暂停操作, 直到手动验证完成;
-- 浏览器窗口若**最小化**可能导致视频播放进度不增加;
+- 浏览器窗口若**最小化**可能导致视频播放进度不增加 (页面会变成后台状态);
 - 若出现其他异常崩溃, 请提交 issue 并附上报错信息.
 
 #### 写在最后
