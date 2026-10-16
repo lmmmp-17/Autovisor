@@ -18,6 +18,30 @@ ENABLED = os.environ.get("AUTOVISOR_E2E") == "1"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
+class PickOptionsTests(unittest.TestCase):
+    def test_single_choice_picks_exactly_one(self):
+        for _ in range(60):
+            self.assertEqual(len(quiz.pick_options(4, multiple=False)), 1)
+
+    def test_multiple_choice_picks_more_than_one_but_never_all(self):
+        # 多选题只勾一个很反常; 但"每次全选"又会变成新的固定模式
+        sizes = {len(quiz.pick_options(5, multiple=True)) for _ in range(200)}
+        self.assertTrue(sizes <= {2, 3, 4}, sizes)
+        self.assertGreater(len(sizes), 1, f"选的个数也应当有变化, 实际 {sizes}")
+
+    def test_multiple_choice_with_two_options_picks_one(self):
+        self.assertEqual(len(quiz.pick_options(2, multiple=True)), 1)
+
+    def test_choices_are_unique_and_in_range(self):
+        for _ in range(60):
+            picks = quiz.pick_options(5, multiple=True)
+            self.assertEqual(len(picks), len(set(picks)))
+            self.assertTrue(all(0 <= i < 5 for i in picks))
+
+    def test_no_options_returns_empty(self):
+        self.assertEqual(quiz.pick_options(0, multiple=True), [])
+
+
 class PickOptionTests(unittest.TestCase):
     def test_covers_every_option_not_just_the_second(self):
         # 改动前是固定点 choices[:2], 单选题答案永远落在第二个
@@ -99,24 +123,41 @@ class QuizAnsweringE2E(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((total, answered, already), (3, 3, 0))
         probe = await self.probe()
         self.assertEqual(probe["rejected"], [], f"出现不可信事件: {probe['rejected']}")
-        self.assertEqual(set(probe["picks"]), {"0", "1", "2"}, "每道题都应当选了一个")
-        # 选中的位置必须在该题的选项范围内(第 2 题只有 3 个选项)
+        self.assertEqual(set(probe["picks"]), {"0", "1", "2"}, "每道题都应当作答了")
         for index, counts in enumerate(probe["optionCounts"]):
-            self.assertLess(int(probe["picks"][str(index)]), counts)
+            picks = probe["picks"][str(index)]
+            self.assertTrue(all(0 <= i < counts for i in picks), (index, picks, counts))
+            # 多选题勾多个, 单选题只勾一个。
+            # 这里不断言"不全选": pick_options 本身永不全选(见 PickOptionsTests),
+            # 但之后的"改主意"可能再补一个刚好补满——3 选的多选题全选是很正常的
+            # 作答, 偶尔出现不构成固定模式。
+            if "多选" in probe["kinds"][index] and counts >= 3:
+                self.assertGreater(len(picks), 1, (index, picks))
+            else:
+                self.assertEqual(len(picks), 1, (index, picks))
 
-    async def test_mostly_one_click_per_question(self):
+    async def test_single_choice_is_clicked_once(self):
         with self._fast():
             await quiz.answer_visible_questions(self.page)
         probe = await self.probe()
         per_question = Counter(entry.split(":")[0] for entry in probe["clicks"])
-        # 改动前每题固定点两次(choices[:2]); 现在只有小概率会改主意
-        self.assertTrue(
-            all(count <= 2 for count in per_question.values()), per_question
-        )
-        self.assertLessEqual(
-            sum(1 for c in per_question.values() if c == 2), 2,
-            f"改主意应当是少数情况, 实际 {per_question}",
-        )
+        single = [i for i, k in enumerate(probe["kinds"]) if "多选" not in k]
+        # 改动前每题固定点两次(choices[:2]), 单选题答案永远落在第二个选项
+        for index in single:
+            self.assertLessEqual(
+                per_question[str(index)], 2,
+                f"单选题最多一次改主意, 实际 {per_question}",
+            )
+
+    async def test_dialog_is_closed_by_its_own_button(self):
+        with self._fast():
+            await quiz.answer_visible_questions(self.page)
+            closed = await quiz.dismiss_dialog(self.page)
+        probe = await self.probe()
+        self.assertTrue(closed)
+        self.assertTrue(probe["closed"], "应当点了弹题弹窗自己的关闭按钮")
+        self.assertEqual(probe["escapes"], 0, "不应再靠 Escape 关弹窗")
+        self.assertEqual(probe["rejected"], [])
 
     async def test_already_answered_questions_are_skipped(self):
         with self._fast():
@@ -139,6 +180,7 @@ class QuizAnsweringE2E(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(quiz.human, "sleep_between", record):
             await quiz.answer_visible_questions(self.page)
         self.assertEqual(calls[0], quiz.READ_QUESTION_S, "动手之前应当先有读题停顿")
+        self.assertIn(quiz.BETWEEN_QUESTIONS_S, calls, "题目之间应当有停顿")
         self.assertEqual(calls[-1], quiz.BEFORE_DISMISS_S, "关掉弹窗之前应当有停顿")
 
 

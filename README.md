@@ -171,7 +171,8 @@ cp config.linux.ini.example config.linux.ini    # Linux
 | 倍速 | 写 `video.playbackRate`, 再改写播放器的倍速标签文字 | 点播放器的倍速菜单, 标签由它自己更新 |
 | 静音 | 写 `video.volume = 0`, 再给 `.volumeBox` 加 `volumeNone` 伪造图标 | 点播放器的音量按钮, 图标由它自己切换 |
 | 起播 / 暂停后恢复 | 调 `video.play()` | 点视频区域 |
-| 课中弹题 | 每题固定点"前两个"选项(单选题答案永远落在第二个)、选项间隔 100ms、1 秒多就答完关掉 | 随机选一个、先有读题停顿、点击带轨迹, 小概率才改主意 |
+| 课中弹题 | 每题固定点"前两个"选项(单选题答案永远落在第二个)、选项间隔 100ms、1 秒多就答完关掉 | 按题型随机选(单选一个/多选多个但不全选)、先有读题停顿、点击带轨迹 |
+| 关闭弹题 | `page.press(".el-dialog", "Escape")` —— 页面上有 12 个 `.el-dialog`, 命中的是第一个隐藏的"温馨提示", 一直超时 | 点弹题弹窗自己的"关闭"按钮 |
 
 做法:
 
@@ -205,15 +206,38 @@ cp config.linux.ini.example config.linux.ini    # Linux
 for each in choices[:2]:            # 固定点前两个选项
     await each.click(timeout=500)
     await page.wait_for_timeout(100)
+...
+await page.press(".el-dialog", "Escape", timeout=1000)
 ```
 
-问题不在于乱选 (这类弹题本来就是随便选一个关掉), 而在于选得太有规律: 单选题点第一个再点第二个, 答案永远落在第二个选项上, 还产生两次选择事件; 真实日志里弹题出现到关闭只隔 1.6 秒, 没有任何读题时间. 现在改成随机选一个、带 2.5~7 秒读题停顿、点击走指针轨迹, 并且只有约 18% 的概率会"改一次主意". 依旧不尝试答对.
+问题不在于乱选 (弹窗自己写着"不会影响到大家作业和考试的成绩"), 而在于选得太有规律: 单选题点第一个再点第二个, 答案永远落在第二个选项上, 还产生两次选择事件; 真实日志里弹题出现到关闭只隔 1.6 秒, 没有任何读题时间.
+
+真实弹题的结构 (`--check-quiz` 实测):
+
+```
+div#playTopic-dialog.el-dialog__wrapper.dialog-test    弹题弹窗, 有唯一 id
+  div.el-dialog__header > button.el-dialog__headerbtn   关闭 ×
+  div.el-dialog__footer > span.dialog-footer > div.btn  "关闭"按钮(不是 el-button)
+.el-scrollbar__view > div.topic                        一道题一个 .topic
+  div.el-pagination > ul.el-pager > li.number          题号其实是分页器页码
+  div.radio
+    p.topic-title > span.title-tit '【多选题】'          题型写在这里
+    ul.topic-list > li.topic-item                      选项
+    p.answer '正确答案：A,B,C'                           答过之后才出现, 在 .topic 内
+```
+
+据此改掉的两个真 bug:
+
+- **关闭弹窗一直是失败的.** 页面上同时有 12 个 `.el-dialog` (AI 助教、异常提示等, 大多隐藏), `page.press(".el-dialog", ...)` 命中的是第一个隐藏的"温馨提示", 所以一直超时 —— 日志里那条 `答题模块轮询未命中(元素 .el-scrollbar__view/.el-dialog): TimeoutError` 就是它. 现在点弹题弹窗自己的"关闭"按钮.
+- **`.answer` 的判断扫的是全页**, 别的隐藏弹窗里也有 `.answer`. 现在收窄到当前 `.topic` 内.
+
+作答改成: 读 `.title-tit` 判断题型, 单选选一个、多选选两个以上但不全选 (全选会变成新的固定模式), 带 2.5~7 秒读题停顿, 点击走指针轨迹, 约 18% 概率改一次主意. 依旧不尝试答对.
 
 还没处理的:
 
 - 进度回退 (`course_playback.py` 里播放器快于平台记录时的对齐) 仍是设置 `currentTime`.
 - 几个提示浮层 (`.exploreTip` 等) 仍是直接从页面里删掉.
-- `.answer` 的检查是全页范围的 (弹窗一次只渲染当前题的答案, 所以实际等价于按题判断).
+- 题号是 Element UI 分页器, 题目很多时分页器会把页码折叠成 `...`, 这时 `li.number` 的数量不等于总题数. 实测遇到的弹题都只有 1 道, 多题情况没验证过.
 
 **连接已有 Chrome (`attachExistingChrome = True`)** 是特征最低的方式: 用的是你自己的浏览器和登录态, 没有任何启动参数痕迹. 这个开关在 3.18.x 里只对 `--check-browser` 生效, 正式运行时被忽略 (合并 #149 时丢失), 现已恢复. 连接模式下不会把浏览器 Cookie 写进 `cookies.json`, 结束时只关闭自己打开的标签页, 也不会隐藏你的浏览器窗口.
 

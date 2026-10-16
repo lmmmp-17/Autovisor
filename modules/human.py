@@ -23,6 +23,11 @@ def pick(items):
     return _rng.choice(list(items))
 
 
+def sample(items, count: int):
+    """从序列里不重复地取 count 个。"""
+    return _rng.sample(list(items), count)
+
+
 def gauss_within(low: float, high: float) -> float:
     """在 [low, high] 内取一个靠中间的值(截断正态)。"""
     mid = (low + high) / 2

@@ -290,11 +290,15 @@ async def skip_questions(page: Page, event_loop) -> None:
                 quiz.QUESTION_PANEL, state="attached", timeout=1000
             )
             total_ques, answered, already = await quiz.answer_visible_questions(page)
+            closed = await quiz.dismiss_dialog(page)
             if total_ques:
                 logger.event(
-                    "课中答题", 题目数=total_ques, 本次作答=answered, 已有答案=already
+                    "课中答题",
+                    题目数=total_ques,
+                    本次作答=answered,
+                    已有答案=already,
+                    已关闭=closed,
                 )
-            await page.press(".el-dialog", "Escape", timeout=1000)
             event_loop.set()
         except TargetClosedError:
             logger.debug("浏览器已关闭, 答题模块停止运行.")

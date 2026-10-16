@@ -26,10 +26,26 @@ from modules.pointer import human_click
 
 logger = Logger()
 
-QUESTION_PANEL = ".el-scrollbar__view"
-QUESTION_NUMBER = ".number"
-EXISTING_ANSWER = ".answer"
-OPTION = ".topic-item"
+# 以下选择器都是 --check-quiz 在真实弹题上取到的。
+#
+# 弹题弹窗有唯一 id, 必须用它: 页面上同时存在 12 个 .el-dialog(AI 助教、异常提示
+# 等等, 大多是隐藏的), 原来按 ".el-dialog" 定位会打在第一个隐藏的"温馨提示"上,
+# 所以那句 page.press(".el-dialog", "Escape") 一直在超时, 弹窗从来不是它关掉的。
+DIALOG = "#playTopic-dialog"
+# 关闭按钮是 footer 里的 div.btn(文字"关闭"), 不是 el-button; header 上还有个 ×
+DIALOG_CLOSE = f"{DIALOG} .dialog-footer .btn"
+DIALOG_CLOSE_X = f"{DIALOG} .el-dialog__headerbtn"
+
+QUESTION_PANEL = f"{DIALOG} .el-scrollbar__view"
+# 一道题一个 .topic; 题号是 Element UI 分页器里的页码
+QUESTION = f"{QUESTION_PANEL} .topic"
+QUESTION_NUMBER = f"{QUESTION_PANEL} .el-pager li.number"
+# 题型写在标题里: 【多选题】/【单选题】/【判断题】
+QUESTION_KIND = f"{QUESTION_PANEL} .topic-title .title-tit"
+# .answer 是答过之后显示的"正确答案：X", 作用等于"这道题不用再答了"。
+# 它在 .topic 内部, 所以按当前题判断, 不扫全页(别的隐藏弹窗里也有 .answer)
+EXISTING_ANSWER = f"{QUESTION} .answer"
+OPTION = f"{QUESTION_PANEL} .topic-list .topic-item"
 
 # 单次点击的等待上限: 弹题上的元素要么在, 要么这道题不长这样
 OPTION_CLICK_TIMEOUT_MS = 4000
@@ -44,6 +60,8 @@ BEFORE_DISMISS_S = (0.8, 2.4)
 # 改主意的概率: 先点一个, 再换成另一个
 RECONSIDER_CHANCE = 0.18
 
+MULTI_CHOICE_MARK = "多选"
+
 
 def pick_option(count: int, exclude: int | None = None) -> int | None:
     """从 count 个选项里随机挑一个, 可以排除某一个(用于改主意)。"""
@@ -55,6 +73,29 @@ def pick_option(count: int, exclude: int | None = None) -> int | None:
     return human.pick(candidates)
 
 
+def pick_options(count: int, multiple: bool) -> list[int]:
+    """按题型决定选哪几个。
+
+    单选只选一个。多选选两个以上——多选题只勾一个很反常——但避开"全选":
+    那会让多选题的答案永远是同一个固定模式, 和原来固定点前两个一样显眼。
+    依旧不尝试答对, 这里只负责让交互形态符合题型。
+    """
+    if count <= 0:
+        return []
+    if not multiple or count < 3:
+        choice = pick_option(count)
+        return [] if choice is None else [choice]
+    how_many = human.pick(range(2, count))
+    return sorted(human.sample(range(count), how_many))
+
+
+async def question_is_multiple(page: Page) -> bool:
+    kind = page.locator(QUESTION_KIND).first
+    if not await kind.count():
+        return False
+    return MULTI_CHOICE_MARK in (await kind.inner_text() or "")
+
+
 async def _click_option(page: Page, index: int) -> bool:
     options = page.locator(OPTION)
     if index >= await options.count():
@@ -64,23 +105,30 @@ async def _click_option(page: Page, index: int) -> bool:
 
 
 async def answer_one_question(page: Page) -> bool:
-    """给当前显示的这道题选一个答案。选了返回 True。"""
-    options = page.locator(OPTION)
-    count = await options.count()
-    choice = pick_option(count)
-    if choice is None:
+    """给当前显示的这道题作答。选了返回 True。"""
+    count = await page.locator(OPTION).count()
+    multiple = await question_is_multiple(page)
+    choices = pick_options(count, multiple)
+    if not choices:
         logger.debug_throttled("quiz:no_option", "这道题没有可选项, 跳过")
         return False
 
-    if not await _click_option(page, choice):
-        return False
-
-    # 偶尔改一次主意: 人会先点一个再换, 但不是每题都换
-    if count > 1 and human.chance(RECONSIDER_CHANCE):
-        second = pick_option(count, exclude=choice)
-        if second is not None:
+    for position, choice in enumerate(choices):
+        if position > 0:
             await human.sleep_between(*BETWEEN_OPTIONS_S)
-            await _click_option(page, second)
+        if not await _click_option(page, choice):
+            return position > 0
+
+    # 偶尔改一次主意: 人会先点一个再换, 但不是每题都换。单选换成另一个,
+    # 多选再补一个没选过的。
+    if count > 1 and human.chance(RECONSIDER_CHANCE):
+        extra = pick_option(count, exclude=choices[-1] if not multiple else None)
+        if multiple:
+            remaining = [i for i in range(count) if i not in choices]
+            extra = human.pick(remaining) if remaining else None
+        if extra is not None:
+            await human.sleep_between(*BETWEEN_OPTIONS_S)
+            await _click_option(page, extra)
     return True
 
 
@@ -90,8 +138,7 @@ async def answer_visible_questions(page: Page) -> tuple[int, int, int]:
     已有答案的题跳过——同一个弹题在之前的运行里答过时就是这种情况, 日志里把两者
     分开记, 免得"已作答=0"看起来像是答题坏了。
     """
-    panel = page.locator(QUESTION_PANEL).first
-    numbers = panel.locator(QUESTION_NUMBER)
+    numbers = page.locator(QUESTION_NUMBER)
     total = await numbers.count()
     if total == 0:
         return 0, 0, 0
@@ -113,8 +160,6 @@ async def answer_visible_questions(page: Page) -> tuple[int, int, int]:
                 "quiz:number", f"切到第 {index + 1} 题失败: {logger.summarize_exception(exc)}"
             )
             continue
-        # 这个检查是全页范围的, 但弹窗一次只渲染当前那道题的答案, 所以实际等价于
-        # "当前这道题已经答过了"
         if await page.locator(EXISTING_ANSWER).count():
             already += 1
             continue
@@ -123,3 +168,27 @@ async def answer_visible_questions(page: Page) -> tuple[int, int, int]:
 
     await human.sleep_between(*BEFORE_DISMISS_S)
     return total, answered, already
+
+
+async def dismiss_dialog(page: Page) -> bool:
+    """点弹题弹窗自己的关闭按钮。关掉了返回 True。
+
+    原来是 page.press(".el-dialog", "Escape"): 那个选择器会命中页面上第一个
+    (隐藏的)对话框, 一直超时。
+    """
+    for selector in (DIALOG_CLOSE, DIALOG_CLOSE_X):
+        target = page.locator(selector).first
+        try:
+            if not await target.count() or not await target.is_visible():
+                continue
+            await human_click(target, timeout=OPTION_CLICK_TIMEOUT_MS)
+            await human.sleep_between(*BETWEEN_OPTIONS_S)
+            if not await page.locator(f"{DIALOG} .el-dialog").first.is_visible():
+                return True
+        except TargetClosedError:
+            raise
+        except Exception as exc:
+            logger.debug_throttled(
+                "quiz:dismiss", f"关闭弹题失败({selector}): {logger.summarize_exception(exc)}"
+            )
+    return False
