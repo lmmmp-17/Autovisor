@@ -84,18 +84,23 @@ async def answer_one_question(page: Page) -> bool:
     return True
 
 
-async def answer_visible_questions(page: Page) -> tuple[int, int]:
-    """逐题作答, 返回 (题目数, 已作答数)。已经有答案的题跳过。"""
+async def answer_visible_questions(page: Page) -> tuple[int, int, int]:
+    """逐题作答, 返回 (题目数, 本次作答数, 已有答案数)。
+
+    已有答案的题跳过——同一个弹题在之前的运行里答过时就是这种情况, 日志里把两者
+    分开记, 免得"已作答=0"看起来像是答题坏了。
+    """
     panel = page.locator(QUESTION_PANEL).first
     numbers = panel.locator(QUESTION_NUMBER)
     total = await numbers.count()
     if total == 0:
-        return 0, 0
+        return 0, 0, 0
 
     # 弹题刚出来先读一会儿题, 再动手
     await human.sleep_between(*READ_QUESTION_S)
 
     answered = 0
+    already = 0
     for index in range(total):
         if index > 0:
             await human.sleep_between(*BETWEEN_QUESTIONS_S)
@@ -108,10 +113,13 @@ async def answer_visible_questions(page: Page) -> tuple[int, int]:
                 "quiz:number", f"切到第 {index + 1} 题失败: {logger.summarize_exception(exc)}"
             )
             continue
+        # 这个检查是全页范围的, 但弹窗一次只渲染当前那道题的答案, 所以实际等价于
+        # "当前这道题已经答过了"
         if await page.locator(EXISTING_ANSWER).count():
+            already += 1
             continue
         if await answer_one_question(page):
             answered += 1
 
     await human.sleep_between(*BEFORE_DISMISS_S)
-    return total, answered
+    return total, answered, already

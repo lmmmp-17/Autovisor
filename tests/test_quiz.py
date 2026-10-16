@@ -95,8 +95,8 @@ class QuizAnsweringE2E(unittest.IsolatedAsyncioTestCase):
 
     async def test_answers_every_question_with_trusted_clicks(self):
         with self._fast():
-            total, answered = await quiz.answer_visible_questions(self.page)
-        self.assertEqual((total, answered), (3, 3))
+            total, answered, already = await quiz.answer_visible_questions(self.page)
+        self.assertEqual((total, answered, already), (3, 3, 0))
         probe = await self.probe()
         self.assertEqual(probe["rejected"], [], f"出现不可信事件: {probe['rejected']}")
         self.assertEqual(set(probe["picks"]), {"0", "1", "2"}, "每道题都应当选了一个")
@@ -122,11 +122,13 @@ class QuizAnsweringE2E(unittest.IsolatedAsyncioTestCase):
         with self._fast():
             await quiz.answer_visible_questions(self.page)
             first = len((await self.probe())["clicks"])
-            await quiz.answer_visible_questions(self.page)
+            total, answered, already = await quiz.answer_visible_questions(self.page)
         self.assertEqual(
             len((await self.probe())["clicks"]), first,
             "已经有 .answer 的题不应再作答",
         )
+        # 第二遍必须报成"已有答案", 而不是"作答失败"
+        self.assertEqual((total, answered, already), (3, 0, 3))
 
     async def test_reading_pause_happens_before_answering(self):
         calls = []

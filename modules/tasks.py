@@ -289,9 +289,11 @@ async def skip_questions(page: Page, event_loop) -> None:
             await page.wait_for_selector(
                 quiz.QUESTION_PANEL, state="attached", timeout=1000
             )
-            total_ques, answered = await quiz.answer_visible_questions(page)
+            total_ques, answered, already = await quiz.answer_visible_questions(page)
             if total_ques:
-                logger.event("课中答题", 题目数=total_ques, 已作答=answered)
+                logger.event(
+                    "课中答题", 题目数=total_ques, 本次作答=answered, 已有答案=already
+                )
             await page.press(".el-dialog", "Escape", timeout=1000)
             event_loop.set()
         except TargetClosedError:
