@@ -130,6 +130,12 @@ def _launch_args(config) -> dict:
         "ignore_default_args": list(AUTOMATION_DEFAULT_ARGS),
         "args": [*_window_args(), *AUTOMATION_FLAGS],
     }
+    # soundOff 时在浏览器这一层静音。播放器上的静音要等视频出现、调节循环转到
+    # 才点得上, 每节课开头会先外放一小段; Playwright 只在无头模式才默认带
+    # --mute-audio, 有界面时得自己加。页面读不到这个开关: video 的 muted /
+    # volume 都不变, 只是声音不送到声卡。连接现有 Chrome 时管不到启动参数。
+    if getattr(config, "soundOff", False):
+        args["args"].append("--mute-audio")
     if executable_path:
         args["executable_path"] = executable_path
     elif channel:

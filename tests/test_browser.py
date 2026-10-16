@@ -216,6 +216,17 @@ class LaunchArgsTests(unittest.TestCase):
     def test_never_headless(self):
         self.assertIs(_launch_args(_OwnedConfig())["headless"], False)
 
+    def test_sound_off_mutes_the_whole_browser(self):
+        # 播放器上的静音要等视频出现才点得上, 课开头会先外放一小段
+        class _Quiet(_OwnedConfig):
+            soundOff = True
+
+        class _Loud(_OwnedConfig):
+            soundOff = False
+
+        self.assertIn("--mute-audio", _launch_args(_Quiet())["args"])
+        self.assertNotIn("--mute-audio", _launch_args(_Loud())["args"])
+
 
 class PreparePageTests(unittest.IsolatedAsyncioTestCase):
     async def test_owned_session_uses_window_sized_viewport_and_injects_nothing(self):
