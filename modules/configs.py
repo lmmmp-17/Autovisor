@@ -127,4 +127,7 @@ class Config:
     def limitSpeed(self) -> float:
         self._read_config()
         speed = self._safe_get_float('course-option', 'limitSpeed', 1.0)
+        # 0 或负数 = 不干预倍速, 保持播放器自己的状态(不产生 ratechange)
+        if speed <= 0:
+            return 0.0
         return min(max(speed, 0.5), 1.8)

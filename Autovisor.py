@@ -18,7 +18,7 @@ from modules.course_runner import (
     run_course,
 )
 from modules.browser import create_browser_session
-from modules.diagnostics import check_browser, check_course
+from modules.diagnostics import check_browser, check_course, check_player
 from modules.login import (
     LOGIN_PASSWORD_SELECTOR,
     LOGIN_SUBMIT_SELECTOR,
@@ -337,6 +337,11 @@ def parse_args():
         help="阻止进度上报和自动播放,只检查课程目录选择器",
     )
     parser.add_argument(
+        "--check-player",
+        metavar="URL",
+        help="只读检查播放器控件结构(不播放、不上报进度), 用于适配倍速/静音控件",
+    )
+    parser.add_argument(
         "--import-cookies",
         metavar="PATH",
         help="从 Requests CookieJar JSON 安全导入未过期的智慧树 Cookie",
@@ -396,6 +401,10 @@ def cli() -> int:
             return 0
         if args.check_browser:
             return asyncio.run(check_browser(config, logger, COOKIE_PATH))
+        if args.check_player:
+            return asyncio.run(
+                check_player(args.check_player, config, logger, COOKIE_PATH)
+            )
         if args.check_course:
             return asyncio.run(
                 check_course(args.check_course, config, logger, COOKIE_PATH)

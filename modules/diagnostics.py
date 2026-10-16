@@ -2,9 +2,11 @@ import asyncio
 import os
 from pathlib import Path
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from modules.browser import create_browser_session
+from modules.pointer import pointer_for
 from modules.lesson_navigation import (
     CATALOGS,
     detect_catalog,
@@ -38,27 +40,55 @@ async def check_browser(config, logger, cookie_path: str) -> int:
             await session.close()
 
 
-async def check_course(course_url: str, config, logger, cookie_path: str) -> int:
-    blocked_markers = (
-        "saveDatabaseIntervalTime",
-        "saveCacheIntervalTime",
-        "saveStuStudyRecord",
-        "saveLearningTime",
-        "saveStudyTime",
-    )
-    blocked_requests = 0
-    blocked_media = 0
+# 进度上报接口。诊断命令会把这些请求拦掉, 保证只读检查不会动真实学习进度。
+PROGRESS_MARKERS = (
+    "saveDatabaseIntervalTime",
+    "saveCacheIntervalTime",
+    "saveStuStudyRecord",
+    "saveLearningTime",
+    "saveStudyTime",
+)
 
-    async def block_progress(route):
-        nonlocal blocked_media, blocked_requests
-        if route.request.resource_type == "media":
-            blocked_media += 1
+# 让 play() 变成空操作, 页面自动播放也立刻被暂停
+NO_PLAYBACK_SCRIPT = (
+    "HTMLMediaElement.prototype.play = function() { "
+    "this.pause(); return Promise.resolve(); }; "
+    "addEventListener('play', event => event.target.pause(), true);"
+)
+
+
+class ReadOnlyGuard:
+    """诊断用的只读护栏: 不上报进度、不播放, 可选是否下载媒体。
+
+    检查播放器控件时必须放开媒体: 媒体被拦时播放器会进入"视频无法播放"的错误态,
+    控制栏根本不会初始化, 什么都看不到。进度上报始终拦住, 所以不会产生学习记录。
+    """
+
+    def __init__(self, block_media: bool = True):
+        self.block_media = block_media
+        self.blocked_requests = 0
+        self.blocked_media = 0
+
+    async def route(self, route):
+        if self.block_media and route.request.resource_type == "media":
+            self.blocked_media += 1
             await route.abort()
-        elif any(marker in route.request.url for marker in blocked_markers):
-            blocked_requests += 1
+        elif any(marker in route.request.url for marker in PROGRESS_MARKERS):
+            self.blocked_requests += 1
             await route.abort()
         else:
             await route.continue_()
+
+    async def install(self, page):
+        await page.route("**/*", self.route)
+        await page.add_init_script(NO_PLAYBACK_SCRIPT)
+
+
+async def check_course(course_url: str, config, logger, cookie_path: str) -> int:
+    guard = ReadOnlyGuard()
+
+    async def block_progress(route):
+        await guard.route(route)
 
     async with async_playwright() as playwright:
         cookies = None if config.attach_existing_chrome else load_cookies(cookie_path)
@@ -68,11 +98,7 @@ async def check_course(course_url: str, config, logger, cookie_path: str) -> int
         try:
             page = session.page
             await page.route("**/*", block_progress)
-            await page.add_init_script(
-                "HTMLMediaElement.prototype.play = function() { "
-                "this.pause(); return Promise.resolve(); }; "
-                "addEventListener('play', event => event.target.pause(), true);"
-            )
+            await page.add_init_script(NO_PLAYBACK_SCRIPT)
             await page.goto(course_url, wait_until="commit", timeout=15000)
             await page.wait_for_timeout(10000)
             screenshot_path = Path.home() / "scratch-data" / "autovisor-course-check.png"
@@ -128,13 +154,172 @@ async def check_course(course_url: str, config, logger, cookie_path: str) -> int
                 f"url={page.url}, catalog={catalog.name}, selectors={counts}, "
                 f"completed={completed_count}/{len(lessons)}, "
                 f"active={active_title!r}, active_progress={active_progress}, "
-                f"video_paused={video_paused}, blocked_media={blocked_media}, "
-                f"blocked_progress={blocked_requests}, "
+                f"video_paused={video_paused}, blocked_media={guard.blocked_media}, "
+                f"blocked_progress={guard.blocked_requests}, "
                 f"verification_visible={verification_visible}, "
                 f"body_length={len(body_text)}, frames={frame_urls}, "
                 f"screenshot={screenshot_path}, html={html_path}",
                 shift=True,
             )
+            return 0
+        finally:
+            await session.close()
+
+# 播放器控件容器。倍速菜单通常要悬停才展开, 所以 check_player 会先 hover 再记录。
+PLAYER_CONTROLS = (".videoArea", ".volumeBox", ".speedBox")
+
+DUMP_SUBTREE_JS = """(selectors) => {
+  const describe = (el, depth) => {
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    const ownText = Array.from(el.childNodes)
+      .filter((node) => node.nodeType === 3)
+      .map((node) => node.textContent.trim())
+      .filter(Boolean)
+      .join(' ');
+    return {
+      depth,
+      tag: el.tagName.toLowerCase(),
+      id: el.id || '',
+      cls: typeof el.className === 'string' ? el.className : '',
+      text: ownText.slice(0, 40),
+      rect: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
+      visible: rect.width > 0 && rect.height > 0 && style.display !== 'none'
+               && style.visibility !== 'hidden' && style.opacity !== '0',
+      clickable: style.cursor === 'pointer',
+    };
+  };
+  const walk = (root, depth, out) => {
+    out.push(describe(root, depth));
+    if (depth < 4) {
+      for (const child of root.children) walk(child, depth + 1, out);
+    }
+    return out;
+  };
+  const result = {};
+  for (const selector of selectors) {
+    const el = document.querySelector(selector);
+    result[selector] = el ? walk(el, 0, []) : null;
+  }
+  return result;
+}"""
+
+VIDEO_STATE_JS = """() => {
+  const video = document.querySelector('video');
+  if (!video) return null;
+  return {
+    playbackRate: video.playbackRate,
+    muted: video.muted,
+    volume: video.volume,
+    paused: video.paused,
+    duration: video.duration,
+    readyState: video.readyState,
+  };
+}"""
+
+
+def _render_subtree(nodes) -> str:
+    lines = []
+    for node in nodes:
+        marks = "".join(
+            [
+                "" if node["visible"] else " [隐藏]",
+                " [cursor:pointer]" if node["clickable"] else "",
+            ]
+        )
+        name = node["tag"]
+        if node["id"]:
+            name += f"#{node['id']}"
+        if node["cls"]:
+            name += f".{'.'.join(node['cls'].split()[:3])}"
+        text = f" {node['text']!r}" if node["text"] else ""
+        w, h = node["rect"][2], node["rect"][3]
+        lines.append(f"{'  ' * node['depth']}{name}{text} {w}x{h}{marks}")
+    return "\n".join(lines)
+
+
+async def check_player(course_url: str, config, logger, cookie_path: str) -> int:
+    """只读检查播放器控件结构, 用于把倍速/静音/起播改成点真实控件。
+
+    全程不播放、不下载媒体、不上报进度, 不会改变课程学习进度。
+    """
+    guard = ReadOnlyGuard(block_media=False)
+    async with async_playwright() as playwright:
+        cookies = None if config.attach_existing_chrome else load_cookies(cookie_path)
+        session = await asyncio.wait_for(
+            create_browser_session(playwright, config, cookies, logger), timeout=45
+        )
+        try:
+            page = session.page
+            await guard.install(page)
+            await page.goto(course_url, wait_until="commit", timeout=15000)
+            try:
+                await page.wait_for_selector("video", state="attached", timeout=30000)
+            except PlaywrightTimeoutError:
+                # 留下现场: 多半是页面停在了别的东西上(弹窗、登录、换课提示)
+                shot = Path.home() / "scratch-data" / "autovisor-player-check.png"
+                shot.parent.mkdir(parents=True, exist_ok=True)
+                if os.name != "nt":
+                    shot.parent.chmod(0o700)
+                await page.screenshot(path=str(shot), full_page=False)
+                if os.name != "nt":
+                    shot.chmod(0o600)
+                body = (await page.locator("body").inner_text(timeout=3000))[:400]
+                logger.error(
+                    "播放器检查失败: 页面上没有出现 video 元素. "
+                    f"url={page.url} title={await page.title()!r} "
+                    f"frames={[f.url for f in page.frames]} 截图={shot}",
+                    shift=True,
+                )
+                logger.info(f"页面文字(前 400 字): {body!r}")
+                return 1
+            await page.wait_for_timeout(3000)
+
+            state = await page.evaluate(VIDEO_STATE_JS)
+            logger.info(f"播放器初始状态: {state}", shift=True)
+
+            # 先记录未悬停时的结构, 再逐个悬停控件, 看菜单展开后多出什么
+            report = ["", "===== 播放器控件(未悬停) ====="]
+            dump = await page.evaluate(DUMP_SUBTREE_JS, list(PLAYER_CONTROLS))
+            for selector in PLAYER_CONTROLS:
+                report.append(f"--- {selector} ---")
+                report.append(
+                    _render_subtree(dump[selector]) if dump[selector] else "  (页面上没有这个元素)"
+                )
+
+            # 控制栏平时是收起的, 必须先把指针移到视频区域才会出现——真人也是这样。
+            # 这里用原始鼠标移动而不是 locator.hover(): 后者带可交互性检查, 而我们
+            # 要的只是"把指针放过去", 不需要元素先满足可点击条件。
+            pointer = pointer_for(page)
+
+            async def move_over(selector: str) -> bool:
+                box = await page.locator(selector).first.bounding_box()
+                if not box:
+                    return False
+                await pointer.move_to(
+                    box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+                )
+                await page.wait_for_timeout(700)
+                return True
+
+            report.append(f"指针移到 .videoArea: {await move_over('.videoArea')}")
+
+            for selector in (".speedBox", ".volumeBox"):
+                if not await page.locator(selector).first.count():
+                    continue
+                if not await move_over(selector):
+                    report.append(f"--- {selector} (拿不到位置, 控制栏可能仍收起) ---")
+                    continue
+                hovered = await page.evaluate(DUMP_SUBTREE_JS, [selector])
+                report += [f"--- {selector} (指针移上去之后) ---", _render_subtree(hovered[selector])]
+
+            report += [
+                "",
+                f"拦截统计: 媒体={guard.blocked_media} 进度上报={guard.blocked_requests}",
+                "",
+            ]
+            print("\n".join(report))
+            logger.info("播放器检查完成, 未播放也未上报进度.", shift=True)
             return 0
         finally:
             await session.close()

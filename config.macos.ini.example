@@ -20,7 +20,10 @@ showDonateCode = False
 [course-option]
 ;限制每门课程运行时长/min (不限制:0)
 limitMaxTime = 30
-limitSpeed = 1.0
+;播放倍速。0 = 不干预(保持播放器当前倍速, 推荐)
+;填具体值时会去点播放器的倍速菜单; 菜单里没有的档位只能靠写属性设置,
+;那样会被页面看到。实测这个播放器只提供 1.0 / 1.25 / 1.5
+limitSpeed = 0
 soundOff = True
 
 [course-url]

@@ -4,7 +4,7 @@ import time
 from playwright.async_api import TimeoutError
 from playwright.async_api import Page
 from modules.configs import Config
-from modules import human
+from modules import human, player
 from modules.utils import get_video_attr, display_window, hide_window, run_on
 from playwright._impl._errors import TargetClosedError
 from modules.logger import Logger
@@ -111,31 +111,44 @@ async def video_optimize(page: Page, config: Config) -> None:
                 )
                 continue
             volume = await get_video_attr(page, "volume")
+            muted = await get_video_attr(page, "muted")
             rate = await get_video_attr(page, "playbackRate")
             changes = []
-            if config.soundOff and volume != 0:
-                await run_on(page, "video", "(el) => { el.volume = 0; }", "设置静音")
-                await run_on(
-                    page,
-                    ".volumeBox",
-                    '(el) => el.classList.add("volumeNone")',
-                    "更新静音图标",
-                )
-                changes.append(f"音量 {volume}->0")
-            if rate != config.limitSpeed:
-                await run_on(
-                    page,
-                    "video",
-                    f"(el) => {{ el.playbackRate = {config.limitSpeed}; }}",
-                    "设置倍速",
-                )
-                await run_on(
-                    page,
-                    ".speedBox span",
-                    f'(el) => {{ el.innerText = "X {config.limitSpeed}"; }}',
-                    "更新倍速标签",
-                )
-                changes.append(f"倍速 {rate}->{config.limitSpeed}")
+
+            if config.soundOff and not muted and volume != 0:
+                # 先点播放器自己的音量按钮: 图标由它自己切换, 不用我们伪造 volumeNone
+                if await player.mute_by_button(page):
+                    changes.append(f"音量 {volume}->静音(点控件)")
+                else:
+                    await run_on(page, "video", "(el) => { el.volume = 0; }", "设置静音")
+                    await run_on(
+                        page,
+                        ".volumeBox",
+                        '(el) => el.classList.add("volumeNone")',
+                        "更新静音图标",
+                    )
+                    changes.append(f"音量 {volume}->0(写属性)")
+
+            # limitSpeed = 0 表示完全不碰倍速: 播放器自己记住的倍速也是用户的真实
+            # 状态, 中途改它会产生一次 ratechange, 没必要。
+            if config.limitSpeed > 0 and rate != config.limitSpeed:
+                if await player.set_rate_by_menu(page, config.limitSpeed):
+                    changes.append(f"倍速 {rate}->{config.limitSpeed}(点菜单)")
+                else:
+                    await run_on(
+                        page,
+                        "video",
+                        f"(el) => {{ el.playbackRate = {config.limitSpeed}; }}",
+                        "设置倍速",
+                    )
+                    await run_on(
+                        page,
+                        ".speedBox span",
+                        f'(el) => {{ el.innerText = "X {config.limitSpeed}"; }}',
+                        "更新倍速标签",
+                    )
+                    changes.append(f"倍速 {rate}->{config.limitSpeed}(写属性)")
+
             if changes:
                 logger.event("播放器调节", 项目=", ".join(changes))
         except TargetClosedError:
@@ -208,10 +221,15 @@ async def play_video(
                         "尝试播放跳过: 页面未找到元素 .videoArea",
                     )
                     continue
-                await run_on(page, "video", "(el) => el.play()", "恢复播放")
+                # 先点视频区域: 真人就是这么起播的, 事件也是浏览器生成的。
+                # 这个区域是开关, 所以只在上面确认 paused 之后才点。
+                by_click = await player.play_by_click(page)
+                if not by_click:
+                    await run_on(page, "video", "(el) => el.play()", "恢复播放")
                 logger.debug("视频已恢复播放.")
                 logger.event(
                     "恢复播放",
+                    方式="点视频区域" if by_click else "脚本调用",
                     播放器时间=round(state["currentTime"], 1),
                     总时长=round(state["duration"], 1),
                 )
