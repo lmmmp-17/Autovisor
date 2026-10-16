@@ -110,6 +110,15 @@ async def video_optimize(page: Page, config: Config) -> None:
                     "视频调节跳过: 页面未找到元素 video",
                 )
                 continue
+            # 弹题/安全验证的弹窗会盖住播放器, 这时控制栏点不到, 真实控件那条路
+            # 必然失败并退回写属性(实测日志里就出现过 "倍速 1->1.25(写属性)")。
+            # 等弹窗消失再调, 没必要在被挡住的时候硬来。
+            if await has_blocking_overlay(page):
+                logger.debug_throttled(
+                    "video:overlay", "播放器被弹窗挡住, 这一轮不调节"
+                )
+                continue
+
             volume = await get_video_attr(page, "volume")
             muted = await get_video_attr(page, "muted")
             rate = await get_video_attr(page, "playbackRate")

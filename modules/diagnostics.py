@@ -379,3 +379,105 @@ async def check_player(course_url: str, config, logger, cookie_path: str) -> int
             return 0
         finally:
             await session.close()
+
+
+# 弹题弹窗与题目容器。只读检查用, 真正的操作选择器在 modules/quiz.py。
+QUIZ_PARTS = ("#playTopic-dialog", "#playTopic-dialog .el-scrollbar__view")
+
+QUIZ_FACTS_JS = """() => {
+  const q = (s) => Array.from(document.querySelectorAll(s));
+  const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const path = (el) => {
+    const out = [];
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      const cls = typeof n.className === 'string' && n.className
+        ? '.' + n.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
+      out.unshift(n.tagName.toLowerCase() + cls);
+    }
+    return out.join(' > ');
+  };
+  const dialogs = q('.el-dialog');
+  return {
+    dialog_total: dialogs.length,
+    dialog_visible: dialogs.filter(vis).length,
+    quiz_dialog_found: q('#playTopic-dialog').length,
+    questions: q('#playTopic-dialog .el-scrollbar__view .topic').length,
+    numbers: q('#playTopic-dialog .el-scrollbar__view .el-pager li.number').map((e) => e.textContent.trim()),
+    kind: (q('#playTopic-dialog .topic-title .title-tit')[0] || {}).textContent || null,
+    title: (q('#playTopic-dialog .topic-title')[0] || {}).textContent || null,
+    options: q('#playTopic-dialog .topic-list .topic-item').map((e) => e.textContent.trim().slice(0, 24)),
+    answers_in_question: q('#playTopic-dialog .el-scrollbar__view .topic .answer').map((e) => e.textContent.trim().slice(0, 30)),
+    answers_whole_page: q('.answer').map((e) => path(e)),
+    close_button: (q('#playTopic-dialog .dialog-footer .btn')[0] || {}).textContent || null,
+  };
+}"""
+
+
+async def check_quiz(course_url: str, config, logger, cookie_path: str, seek: float | None = None) -> int:
+    """只读检查课中弹题的结构, 用于适配弹题选择器。
+
+    会静音播放等弹题出现(可以用 --seek 跳到已知的弹题时间点), 但拦掉进度上报,
+    也不作答、不关闭弹窗, 所以不会产生学习记录。
+    """
+    guard = ReadOnlyGuard(block_media=False)
+    async with async_playwright() as playwright:
+        cookies = None if config.attach_existing_chrome else load_cookies(cookie_path)
+        session = await asyncio.wait_for(
+            create_browser_session(playwright, config, cookies, logger), timeout=45
+        )
+        try:
+            page = session.page
+            # 这里只拦进度上报, 不装 NO_PLAYBACK_SCRIPT: 弹题要靠播放才会出现
+            await page.route("**/*", guard.route)
+            await page.goto(course_url, wait_until="commit", timeout=15000)
+            await page.wait_for_selector("video", state="attached", timeout=30000)
+            await page.wait_for_timeout(4000)
+
+            await page.evaluate(
+                """(target) => {
+                    const video = document.querySelector('video');
+                    if (!video) return;
+                    video.muted = true;
+                    if (target !== null) video.currentTime = target;
+                    video.play().catch(() => {});
+                }""",
+                seek,
+            )
+            logger.info(
+                "已静音播放, 正在等课中弹题出现(最多 5 分钟)..."
+                + (f" 已跳到 {seek:.0f}s" if seek is not None else ""),
+                shift=True,
+            )
+            try:
+                await page.wait_for_selector(".topic-title", state="visible", timeout=300000)
+            except PlaywrightTimeoutError:
+                logger.warn("等待期间没有出现课中弹题.", shift=True)
+                return 1
+            await page.wait_for_timeout(1500)
+            await page.evaluate("() => document.querySelector('video').pause()")
+
+            facts = await page.evaluate(QUIZ_FACTS_JS)
+            report = ["", "===== 课中弹题 ====="]
+            report.append(f"全页 .el-dialog: {facts['dialog_total']} 个, 其中可见 {facts['dialog_visible']} 个")
+            report.append(f"  (所以不能按 .el-dialog 定位弹题, 要用 #playTopic-dialog)")
+            report.append(f"#playTopic-dialog: {facts['quiz_dialog_found']} 个")
+            report.append(f"题目(.topic): {facts['questions']} 个   题号(.el-pager li.number): {facts['numbers']}")
+            report.append(f"题型: {facts['kind']!r}")
+            report.append(f"标题: {(facts['title'] or '')[:60]!r}")
+            report.append(f"选项: {facts['options']}")
+            report.append(f"当前题内的 .answer: {facts['answers_in_question']}")
+            report.append(f"全页 .answer 共 {len(facts['answers_whole_page'])} 处:")
+            for item in facts["answers_whole_page"]:
+                report.append(f"    {item}")
+            report.append(f"关闭按钮文字: {facts['close_button']!r}")
+            report.append("")
+            for selector in QUIZ_PARTS:
+                dump = await page.evaluate(DUMP_SUBTREE_JS, [selector])
+                report += [f"--- {selector} ---",
+                           _render_subtree(dump[selector]) if dump[selector] else "  (没有这个元素)"]
+            report += ["", f"拦截统计: 进度上报={guard.blocked_requests}", ""]
+            print("\n".join(report))
+            logger.info("弹题检查完成, 未作答也未上报进度.", shift=True)
+            return 0
+        finally:
+            await session.close()
