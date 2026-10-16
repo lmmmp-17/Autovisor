@@ -24,7 +24,7 @@ from playwright._impl._errors import TargetClosedError
 
 from modules import human
 from modules.logger import Logger
-from modules.pointer import human_click, pointer_for
+from modules.pointer import aim_at, pointer_for
 
 logger = Logger()
 
@@ -35,8 +35,9 @@ SPEED_BOX = ".speedBox"
 SPEED_LABEL = ".speedBox span"
 SPEED_TAB = ".speedBox .speedList .speedTab"
 
-# 控件交互的等待上限: 控制栏要么马上展开, 要么就是这个播放器不长这样
-CONTROL_TIMEOUT_MS = 4000
+# 控制栏在指针静止约 2.5 秒后自动收起(实测)。所有控件操作必须在这个窗口内做完,
+# 所以这条路径上的等待都取短的固定区间, 不用 human.sleep 那条会偶发拉长的长尾。
+CONTROL_VISIBLE_MS = 2500
 
 _RATE_IN_LABEL = re.compile(r"(\d+(?:\.\d+)?)")
 
@@ -47,31 +48,37 @@ def parse_rate_label(text: str) -> float | None:
     return float(match.group(1)) if match else None
 
 
-async def _center_of(page: Page, selector: str):
+async def _move_onto(page: Page, selector: str) -> bool:
+    """把指针移到元素上, 落点之后再补一次极小的移动。
+
+    补这一下是必须的, 不是为了像人: 控制栏(.controlsBar)平时是 display:none,
+    指针进入播放器区域才显示, 而移动轨迹带弧度, 中途可能甩出去让它重新收起。
+    浏览器要再收到一个鼠标事件才会重新做命中测试, 少了这一步, 悬停才展开的
+    倍速菜单会间歇性打不开。
+    """
     box = await page.locator(selector).first.bounding_box()
     if not box or box["width"] <= 0 or box["height"] <= 0:
-        return None
-    return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-
-
-async def _move_onto(page: Page, selector: str) -> bool:
-    """把指针移到元素中心, 再补一次极小的移动。
-
-    补这一下是必须的, 不是为了像人。收起的控制栏靠祖先的 pointer-events: none
-    挡住, 指针落点命中的是底下的视频; 视频进入 hover 后控制栏才变可交互, 而浏览器
-    要再收到一个鼠标事件才会重新做命中测试。移动轨迹是带弧度的, 中途可能甩出视频
-    区域让控制栏重新收起, 所以不能指望落点那一下就位——少了这一步, 倍速菜单会
-    间歇性打不开。
-    """
-    center = await _center_of(page, selector)
-    if center is None:
         return False
     pointer = pointer_for(page)
-    await pointer.move_to(*center)
+    await pointer.move_to(*aim_at(box))
     await page.mouse.move(round(pointer.x) + 1, round(pointer.y))
     pointer.x += 1
-    await human.sleep(0.4)
+    await human.sleep_between(0.12, 0.3)
     return True
+
+
+async def _click_here(page: Page) -> None:
+    """指针已经在目标上了, 直接按下抬起。
+
+    不走 human_click: 它会重新定位元素、再移动一次、并等元素满足可点击条件,
+    这些加起来经常超过控制栏 2.5 秒的展开窗口, 导致静音/倍速间歇性失败。
+    按下到抬起仍保持人手量级的间隔。操作是否生效由调用方读播放器状态确认,
+    比命中测试更可靠。
+    """
+    await human.sleep_between(0.05, 0.14)
+    await page.mouse.down()
+    await human.sleep_between(0.048, 0.132)
+    await page.mouse.up()
 
 
 async def reveal_controls(page: Page) -> bool:
@@ -84,6 +91,7 @@ async def reveal_controls(page: Page) -> bool:
 
 
 async def _open_speed_menu(page: Page) -> bool:
+    """悬停倍速框展开选项。实测这个菜单响应悬停, 不需要点。"""
     if not await _move_onto(page, SPEED_BOX):
         return False
     return await page.locator(SPEED_TAB).first.is_visible()
@@ -109,18 +117,23 @@ async def set_rate_by_menu(page: Page, rate: float) -> bool:
             logger.debug_throttled("player:speed_menu", "倍速菜单跳过: 选项没有出现")
             return False
 
+        # 先把所有档位的文字读出来再动指针: 边读边移会白耗展开窗口
         tabs = page.locator(SPEED_TAB)
-        for index in range(await tabs.count()):
-            tab = tabs.nth(index)
-            if parse_rate_label(await tab.inner_text()) != rate:
-                continue
-            await human_click(tab, timeout=CONTROL_TIMEOUT_MS)
-            await human.sleep(0.6)
-            return await current_rate_label(page) == rate
-        logger.debug_throttled(
-            "player:speed_absent", f"倍速菜单里没有 {rate} 这一档"
-        )
-        return False
+        labels = [
+            parse_rate_label(await tabs.nth(i).inner_text())
+            for i in range(await tabs.count())
+        ]
+        if rate not in labels:
+            logger.debug_throttled(
+                "player:speed_absent",
+                f"倍速菜单里没有 {rate} 这一档, 可选: {[l for l in labels if l]}",
+            )
+            return False
+
+        await _move_onto(page, f"{SPEED_TAB} >> nth={labels.index(rate)}")
+        await _click_here(page)
+        await human.sleep_between(0.3, 0.6)
+        return await current_rate_label(page) == rate
     except TargetClosedError:
         raise
     except Exception as exc:
@@ -138,14 +151,13 @@ async def mute_by_button(page: Page) -> bool:
     try:
         if not await reveal_controls(page):
             return False
-        if not await _move_onto(page, VOLUME_BOX):
-            return False
-        icon = page.locator(VOLUME_ICON).first
-        if not await icon.count():
+        if not await page.locator(VOLUME_ICON).first.count():
             logger.debug_throttled("player:volume_absent", "静音跳过: 没有音量按钮")
             return False
-        await human_click(icon, timeout=CONTROL_TIMEOUT_MS)
-        await human.sleep(0.5)
+        if not await _move_onto(page, VOLUME_ICON):
+            return False
+        await _click_here(page)
+        await human.sleep_between(0.3, 0.5)
         state = await page.evaluate(
             """() => {
                 const v = document.querySelector('video');
@@ -168,11 +180,12 @@ async def play_by_click(page: Page) -> bool:
     只在确认处于暂停时调用: 这个区域是开关, 正在播放时点一下会变成暂停。
     """
     try:
-        area = page.locator(VIDEO_AREA).first
-        if not await area.count():
+        if not await page.locator(VIDEO_AREA).first.count():
             return False
-        await human_click(area, timeout=CONTROL_TIMEOUT_MS)
-        await human.sleep(0.7)
+        if not await _move_onto(page, VIDEO_AREA):
+            return False
+        await _click_here(page)
+        await human.sleep_between(0.5, 0.9)
         paused = await page.evaluate(
             "() => { const v = document.querySelector('video'); return v ? v.paused : null; }"
         )

@@ -6,7 +6,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from modules.browser import create_browser_session
-from modules.pointer import pointer_for
+from modules.pointer import human_click, pointer_for
 from modules.lesson_navigation import (
     CATALOGS,
     detect_catalog,
@@ -204,6 +204,24 @@ DUMP_SUBTREE_JS = """(selectors) => {
   return result;
 }"""
 
+ANCESTORS_JS = """(selector) => {
+  const el = document.querySelector(selector);
+  if (!el) return null;
+  const out = [];
+  for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+    const s = getComputedStyle(node);
+    const r = node.getBoundingClientRect();
+    out.push({
+      tag: node.tagName.toLowerCase(),
+      cls: (typeof node.className === 'string' ? node.className : '').slice(0, 60),
+      rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
+      display: s.display, visibility: s.visibility, opacity: s.opacity,
+      pointerEvents: s.pointerEvents, overflow: s.overflow, position: s.position,
+    });
+  }
+  return out;
+}"""
+
 VIDEO_STATE_JS = """() => {
   const video = document.querySelector('video');
   if (!video) return null;
@@ -233,8 +251,8 @@ def _render_subtree(nodes) -> str:
         if node["cls"]:
             name += f".{'.'.join(node['cls'].split()[:3])}"
         text = f" {node['text']!r}" if node["text"] else ""
-        w, h = node["rect"][2], node["rect"][3]
-        lines.append(f"{'  ' * node['depth']}{name}{text} {w}x{h}{marks}")
+        x, y, w, h = node["rect"]
+        lines.append(f"{'  ' * node['depth']}{name}{text} {w}x{h} @{x},{y}{marks}")
     return "\n".join(lines)
 
 
@@ -299,6 +317,10 @@ async def check_player(course_url: str, config, logger, cookie_path: str) -> int
                 await pointer.move_to(
                     box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
                 )
+                # 和 player._move_onto 一样要补一次微动迫使重新命中测试。
+                # 少了这一步, 悬停才展开的菜单会被误判成"没有展开"。
+                await page.mouse.move(round(pointer.x) + 1, round(pointer.y))
+                pointer.x += 1
                 await page.wait_for_timeout(700)
                 return True
 
@@ -312,6 +334,40 @@ async def check_player(course_url: str, config, logger, cookie_path: str) -> int
                     continue
                 hovered = await page.evaluate(DUMP_SUBTREE_JS, [selector])
                 report += [f"--- {selector} (指针移上去之后) ---", _render_subtree(hovered[selector])]
+
+            # 菜单可能是点开的而不是悬停展开的。点 .speedBox 本身只打开菜单,
+            # 不会改倍速(改倍速要点里面的 .speedTab), 所以这一步仍是只读的。
+            for selector in (".speedBox", ".volumeBox"):
+                target = page.locator(selector).first
+                if not await target.count():
+                    continue
+                try:
+                    await human_click(target, timeout=4000)
+                    await page.wait_for_timeout(800)
+                    clicked = await page.evaluate(DUMP_SUBTREE_JS, [selector])
+                    report += [
+                        f"--- {selector} (点一下之后) ---",
+                        _render_subtree(clicked[selector]),
+                    ]
+                except Exception as exc:
+                    report.append(f"--- {selector} (点击失败: {logger.summarize_exception(exc)}) ---")
+
+            report.append("")
+            report.append("===== 控件的祖先链(找出是哪一层把它藏起来的) =====")
+            for selector in (".speedBox", ".volumeBox"):
+                chain = await page.evaluate(ANCESTORS_JS, selector)
+                if not chain:
+                    continue
+                report.append(f"--- {selector} 往上 ---")
+                for level, node in enumerate(chain):
+                    name = f"{node['tag']}" + (f".{'.'.join(node['cls'].split()[:2])}" if node['cls'] else "")
+                    x, y, w, h = node["rect"]
+                    report.append(
+                        f"{'  ' * level}{name} {w}x{h} @{x},{y} "
+                        f"display={node['display']} vis={node['visibility']} "
+                        f"opacity={node['opacity']} pointer={node['pointerEvents']} "
+                        f"pos={node['position']} overflow={node['overflow']}"
+                    )
 
             report += [
                 "",

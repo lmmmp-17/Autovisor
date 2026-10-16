@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>课中弹题(桩)</title>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  .el-dialog { width: 520px; margin: 20px; border: 1px solid #999; padding: 12px; }
+  .el-scrollbar__view { display: flex; gap: 8px; margin-bottom: 12px; }
+  .number { width: 32px; height: 32px; line-height: 32px; text-align: center;
+    border: 1px solid #888; cursor: pointer; }
+  .number.active { background: #e3f2fd; }
+  .topic-title { font-weight: bold; margin-bottom: 8px; }
+  .topic-item { padding: 8px; border: 1px solid #bbb; margin-bottom: 6px; cursor: pointer; }
+  .topic-item.chosen { background: #d7f0d7; }
+  .answer { color: #2a2; }
+</style>
+</head>
+<body>
+<div class="el-dialog">
+  <div class="el-scrollbar__view"></div>
+  <div class="topic-title"></div>
+  <div id="options"></div>
+  <div id="answered"></div>
+</div>
+<script>
+/* 只接受 isTrusted 的事件。记录每道题最终选中的是第几个选项,
+ * 以及点了几次——用来断言答案不再固定落在第二个位置。 */
+const probe = { rejected: [], picks: {}, clicks: [], escapes: 0, optionCounts: [4, 3, 5] };
+window.__probe = probe;
+const trusted = (fn) => (e) => {
+  if (!e.isTrusted) { probe.rejected.push(e.type + ':' + (e.target.className || e.target.tagName)); return; }
+  fn(e);
+};
+
+let current = 0;
+const answers = {};                     /* 题号 -> 选中的选项下标 */
+const total = probe.optionCounts.length;
+
+const view = document.querySelector('.el-scrollbar__view');
+for (let i = 0; i < total; i++) {
+  const n = document.createElement('div');
+  n.className = 'number';
+  n.textContent = String(i + 1);
+  n.addEventListener('click', trusted(() => { current = i; render(); }));
+  view.appendChild(n);
+}
+
+function render() {
+  document.querySelectorAll('.number').forEach((n, i) => n.classList.toggle('active', i === current));
+  document.querySelector('.topic-title').textContent = `第 ${current + 1} 题`;
+  const box = document.getElementById('options');
+  box.textContent = '';
+  for (let i = 0; i < probe.optionCounts[current]; i++) {
+    const opt = document.createElement('div');
+    opt.className = 'topic-item' + (answers[current] === i ? ' chosen' : '');
+    opt.textContent = 'ABCDE'[i];
+    opt.addEventListener('click', trusted(() => {
+      answers[current] = i;
+      probe.picks[current] = i;
+      probe.clicks.push(`${current}:${i}`);
+      render();
+    }));
+    box.appendChild(opt);
+  }
+  /* 已作答的题会出现 .answer, answer_visible_questions 应当跳过它们 */
+  document.getElementById('answered').innerHTML =
+    answers[current] !== undefined ? '<span class="answer">已作答</span>' : '';
+}
+render();
+
+document.addEventListener('keydown', trusted((e) => {
+  if (e.key === 'Escape') probe.escapes += 1;
+}));
+</script>
+</body>
+</html>

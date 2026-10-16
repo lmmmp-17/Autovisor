@@ -78,6 +78,59 @@ class _Page:
         return None
 
 
+class _Mouse:
+    def __init__(self):
+        self.moves = []
+        self.downs = 0
+        self.ups = 0
+
+    async def move(self, x, y):
+        self.moves.append((x, y))
+
+    async def down(self):
+        self.downs += 1
+
+    async def up(self):
+        self.ups += 1
+
+
+class _MousePage(_Page):
+    """控件有尺寸的页面: 用于走通 _move_onto / _click_here 的真实代码路径"""
+
+    def __init__(self, boxes):
+        super().__init__(boxes)
+        self.mouse = _Mouse()
+        self.viewport_size = {"width": 1440, "height": 766}
+
+
+class MoveOntoTests(unittest.IsolatedAsyncioTestCase):
+    """不开浏览器也要覆盖到落点计算: 之前 aim_at 写成了 pointer.aim_at,
+    AttributeError 被宽泛的 except 吞掉, 三个控件操作全部静默退化成 False。"""
+
+    async def test_lands_inside_the_element_and_nudges(self):
+        box = {"x": 860, "y": 700, "width": 72, "height": 40}
+        page = _MousePage({".speedBox": box})
+        with mock.patch.object(player.human, "sleep_between", mock.AsyncMock()):
+            self.assertTrue(await player._move_onto(page, ".speedBox"))
+        self.assertTrue(page.mouse.moves, "应当真的移动了指针")
+        x, y = page.mouse.moves[-1]
+        self.assertTrue(box["x"] <= x <= box["x"] + box["width"] + 1, (x, box))
+        self.assertTrue(box["y"] <= y <= box["y"] + box["height"], (y, box))
+        # 最后一下必须是补的那次微动: 控制栏靠它才会重新命中测试
+        self.assertEqual(page.mouse.moves[-1][0] - round(page.mouse.moves[-2][0]), 1)
+
+    async def test_click_here_presses_and_releases(self):
+        page = _MousePage({})
+        with mock.patch.object(player.human, "sleep_between", mock.AsyncMock()):
+            await player._click_here(page)
+        self.assertEqual((page.mouse.downs, page.mouse.ups), (1, 1))
+
+    async def test_zero_sized_element_is_reported_not_clicked(self):
+        page = _MousePage({".speedBox": {"x": 0, "y": 0, "width": 0, "height": 0}})
+        self.assertFalse(await player._move_onto(page, ".speedBox"))
+        self.assertEqual(page.mouse.moves, [], "收起的控件不应该被点")
+
+
 class FallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_reveal_fails_without_a_video_area_box(self):
         self.assertFalse(await player.reveal_controls(_Page()))

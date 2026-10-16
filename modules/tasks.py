@@ -4,7 +4,7 @@ import time
 from playwright.async_api import TimeoutError
 from playwright.async_api import Page
 from modules.configs import Config
-from modules import human, player
+from modules import human, player, quiz
 from modules.utils import get_video_attr, display_window, hide_window, run_on
 from playwright._impl._errors import TargetClosedError
 from modules.logger import Logger
@@ -115,7 +115,8 @@ async def video_optimize(page: Page, config: Config) -> None:
             rate = await get_video_attr(page, "playbackRate")
             changes = []
 
-            if config.soundOff and not muted and volume != 0:
+            # volume 为 None 说明这一刻读不到播放器状态(课时切换中), 什么都别做
+            if config.soundOff and volume is not None and not muted and volume != 0:
                 # 先点播放器自己的音量按钮: 图标由它自己切换, 不用我们伪造 volumeNone
                 if await player.mute_by_button(page):
                     changes.append(f"音量 {volume}->静音(点控件)")
@@ -165,10 +166,15 @@ async def video_optimize(page: Page, config: Config) -> None:
             continue
 
 
+# 播放器未就绪时最多等这么多轮(每轮约 2 秒)再退回脚本起播
+MAX_NOT_READY_ROUNDS = 4
+
+
 async def play_video(
     page: Page, playback_enabled: asyncio.Event | None = None
 ) -> None:
     await page.wait_for_load_state("domcontentloaded")
+    not_ready_rounds = 0
     while True:
         try:
             await human.sleep(2.0)
@@ -193,6 +199,7 @@ async def play_video(
                 """(el) => ({
                     paused: el.paused,
                     ended: el.ended,
+                    readyState: el.readyState,
                     currentTime: el.currentTime,
                     duration: el.duration,
                 })""",
@@ -223,9 +230,22 @@ async def play_video(
                     continue
                 # 先点视频区域: 真人就是这么起播的, 事件也是浏览器生成的。
                 # 这个区域是开关, 所以只在上面确认 paused 之后才点。
-                by_click = await player.play_by_click(page)
+                #
+                # 课时刚切过去时播放器还在初始化, 点了也起不来。以前这里会立刻
+                # 退回 el.play(), 于是每节课的第一次起播都是脚本调用。现在先让它
+                # 装一会儿, 连着几轮都没就绪才退回去。
+                ready = (state["readyState"] or 0) >= 3
+                by_click = await player.play_by_click(page) if ready else False
+                if not by_click and not ready and not_ready_rounds < MAX_NOT_READY_ROUNDS:
+                    not_ready_rounds += 1
+                    logger.debug_throttled(
+                        "video:not_ready",
+                        f"播放器还没就绪(readyState={state['readyState']}), 等下一轮再起播",
+                    )
+                    continue
                 if not by_click:
                     await run_on(page, "video", "(el) => el.play()", "恢复播放")
+                not_ready_rounds = 0
                 logger.debug("视频已恢复播放.")
                 logger.event(
                     "恢复播放",
@@ -265,20 +285,13 @@ async def skip_questions(page: Page, event_loop) -> None:
                 logger.warn("当前课程为新版本,不支持自动答题.", shift=True)
                 logger.event("答题", 结果="跳过", 原因="课程版本不支持")
                 return
-            await asyncio.sleep(2)
-            ques_element = await page.wait_for_selector(".el-scrollbar__view", state="attached", timeout=1000)
-            total_ques = await ques_element.query_selector_all(".number")
+            await human.sleep(2.0)
+            await page.wait_for_selector(
+                quiz.QUESTION_PANEL, state="attached", timeout=1000
+            )
+            total_ques, answered = await quiz.answer_visible_questions(page)
             if total_ques:
-                answered = 0
-                for ques in total_ques:
-                    await ques.click(timeout=500)
-                    if not await page.query_selector(".answer"):
-                        choices = await page.query_selector_all(".topic-item")
-                        for each in choices[:2]:
-                            await each.click(timeout=500)
-                            await page.wait_for_timeout(100)
-                        answered += 1
-                logger.event("课中答题", 题目数=len(total_ques), 已作答=answered)
+                logger.event("课中答题", 题目数=total_ques, 已作答=answered)
             await page.press(".el-dialog", "Escape", timeout=1000)
             event_loop.set()
         except TargetClosedError:

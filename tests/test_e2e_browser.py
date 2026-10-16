@@ -145,12 +145,16 @@ class TrustedInputE2E(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("agreement-link", log, "勾选协议时点开了协议链接")
         self.assertGreater(probe["wheels"], 0, "应当用真实滚轮滚动目录")
         # 每个输入框: 全选(修饰键 + a) + 退格, 然后每个字符一个 keydown。
-        # 只看落在这两个输入框上的按键: 有界面的窗口弹出时会抢系统焦点, 正在使用
-        # 这台机器的人按下的键会被送进页面(实测混进过一个落在 <body> 上的 PageUp)。
+        # 断言"期望序列是实际序列的子序列"而不是完全相等: 有界面的窗口会抢系统焦点,
+        # 这台机器上真实按下的键会混进来(实测遇到过 PageUp 和 WakeUp)。用 fill()
+        # 那种一次性写入的话一个按键都不会有, 这个断言照样挂。
         for field, text in (("lUsername", username), ("lPassword", "secret12")):
             typed = [k.split("@")[0] for k in probe["keys"] if k.endswith("@" + field)]
             modifier = "Meta" if sys.platform == "darwin" else "Control"
-            self.assertEqual(typed, [modifier, "a", "Backspace", *text], probe["keys"])
+            expected = [modifier, "a", "Backspace", *text]
+            remaining = iter(typed)
+            missing = [k for k in expected if not any(seen == k for seen in remaining)]
+            self.assertEqual(missing, [], f"{field} 少了按键 {missing}; 实际 {typed}")
         self.assertEqual(expanded, 3)
         self.assertTrue(handled)
         self.assertEqual(await self.page.input_value("#lUsername"), username)
