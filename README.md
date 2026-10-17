@@ -14,35 +14,24 @@ fork 自 [CXRunfree/Autovisor](https://github.com/CXRunfree/Autovisor)，这个�
 
 ## 快速开始（源码运行）
 
-### 0. 准备
+### 1. 准备（只做一次）
 
-- **浏览器**：Google Chrome（默认）。也可以用 Edge，或者让程序自己下载 Chromium（配置里 `driver = Chromium`）。
-- **uv**（Python 环境管理工具）：
-  - Linux / macOS：不用管，`./run.sh` 发现没装会自动装。
-  - Windows：自己装一次，`winget install --id=astral-sh.uv -e` 或 `pip install uv`。
-- **不需要自己装 Python**：uv 会按仓库里的 `.python-version`（3.13）准备好。
-- 下载这个仓库：
+- **浏览器**：Windows 默认用 Edge，Linux / macOS 默认用 Google Chrome。也可以在配置里换。
+- **下载这个仓库**：在 GitHub 页面点 **Code → Download ZIP** 解压；或者 `git clone https://github.com/lmmmp-17/Autovisor.git`。
+- **不需要自己装 Python**。入口脚本会用 [uv](https://docs.astral.sh/uv/) 准备好 Python 3.13 和全部依赖；没有 uv 的话：Linux / macOS 会自动装，Windows 会问你要不要用 winget 装。
 
-  ```bash
-  git clone https://github.com/lmmmp-17/Autovisor.git
-  cd Autovisor
-  ```
+### 2. 第一次运行：生成配置文件
 
-### 1. 复制配置模板
+| 系统 | 怎么启动 |
+| --- | --- |
+| Windows | 双击仓库里的 **`run.cmd`** |
+| Linux / macOS | 在仓库目录下执行 **`./run.sh`** |
 
-```bash
-cp config.linux.ini.example config.linux.ini    # Linux
-cp config.macos.ini.example config.macos.ini    # macOS
-```
+第一次运行只会生成配置文件（Windows 是 `config.ini`，Linux 是 `config.linux.ini`，macOS 是 `config.macos.ini`）然后退出；Windows 上会直接用记事本打开它。
 
-```bat
-:: Windows（cmd）
-copy config.ini.example config.ini
-```
+### 3. 填写课程地址
 
-### 2. 填写配置
-
-用文本编辑器打开刚复制出来的文件。**必须填的只有课程地址**，其它保持默认就能跑：
+在配置文件里找到 `[course-url]`，**把 `URL1` 填成课程播放页的地址**，保存：
 
 ```ini
 [course-url]
@@ -50,7 +39,7 @@ URL1 = https://...     ; 课程播放页的地址（能直接看到视频的那�
 URL2 =                 ; 多门课就往下填
 ```
 
-其它常用项：
+其它项保持默认就能跑。常用的几项：
 
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
@@ -58,29 +47,22 @@ URL2 =                 ; 多门课就往下填
 | `soundOff` | `True` | 静音。启动的浏览器整个不出声，播放器上也会点静音 |
 | `limitSpeed` | `0` | `0` 表示不改倍速（推荐）。这个播放器只有 1.0 / 1.25 / 1.5 三档 |
 | `limitMaxTime` | `30` | 每门课最多跑多少分钟，`0` 不限 |
-| `driver` | Linux/macOS 为 `Chrome`，Windows 为 `Edge` | 用哪个浏览器 |
-| `enableAutoCaptcha` | Windows 模板为 `True`，Linux / macOS 为 `False` | 自动过登录滑块。需要额外依赖（见下一步） |
+| `driver` | Windows 为 `Edge`，Linux / macOS 为 `Chrome` | 用哪个浏览器。Linux 上也可以填 `Chromium`，会自动下载 |
+| `EXE_PATH` | 空 | 浏览器装在非默认位置时填它的完整路径 |
+| `enableAutoCaptcha` | Windows 模板为 `True`，Linux / macOS 为 `False` | 自动过登录滑块。开着时会多装 numpy、opencv |
 | `enableHideWindow` | `False` | 把窗口移出屏幕，只在 Windows 上有效 |
 
 配置项不要加引号。
 
-### 3. 运行
+### 4. 再运行一次：开始刷课
 
-```bash
-./run.sh            # Linux / macOS
-```
+还是双击 `run.cmd`，或者执行 `./run.sh`。
 
-第一次运行会自动部署环境（安装 uv 和依赖），之后直接启动。改了配置或依赖会自动重新部署，`./run.sh --setup` 可以强制重建。
+- 第一次会自动准备环境：uv、Python 3.13、依赖。之后改了配置或依赖也会自动更新。Linux / macOS 可以用 `./run.sh --setup` 强制重建。
+- 程序会打开浏览器 → 登录（没填账号就等你手动登录，登录页的滑块也要手动拖）→ 按配置里的顺序逐门课播放。
+- 按 `Ctrl+C` 停止。
 
-```bat
-:: Windows（cmd），在仓库目录下
-uv sync --extra captcha
-uv run python Autovisor.py
-```
-
-`--extra captcha` 装的是自动过滑块用的 numpy 和 opencv。Windows 模板默认开着自动滑块；如果你把 `enableAutoCaptcha` 改成了 `False`，用 `uv sync` 就够了。Windows 源码运行我没有在真机上跑过，CI 只在 Windows 上跑了单元测试。
-
-程序会打开浏览器 → 登录（没填账号就等你手动登录，登录页的滑块也要手动拖）→ 按配置里的顺序逐门课播放。按 `Ctrl+C` 停止。
+Windows 上的 `run.cmd` 我没有在真机上跑过，CI 只在 Windows 上跑了单元测试。遇到问题请把命令行窗口里的输出贴出来。
 
 ### 可选：连接你已经开着的 Chrome
 
@@ -106,7 +88,7 @@ uv run python Autovisor.py
 
 2. 在这个 Chrome 里登录智慧树。
 3. 配置里改成 `attachExistingChrome = True`（`cdpUrl` 默认就是 `http://127.0.0.1:9222`）。
-4. 照第 3 步运行。
+4. 照第 4 步运行。
 
 这个模式下程序不会把 Cookie 写进 `data/cookies.json`，结束时只关闭自己打开的标签页，也不会隐藏你的窗口。用完把这个 Chrome 关掉：调试端口开着时，本机的任何程序都能控制它。
 
@@ -120,13 +102,13 @@ uv run python Autovisor.py
 
 | 现象 | 处理 |
 | --- | --- |
-| `配置文件无效` | 没有复制模板，或者文件名不对。见第 1 步 |
+| `配置文件无效` | 配置文件被改坏了。删掉它重新运行一次入口脚本，会重新生成 |
 | `未检测到有效网址` | `URL1` 要填课程**播放页**的地址，不是课程首页 |
 | `浏览器启动失败` | 检查 `driver`、`EXE_PATH`。找浏览器路径：在浏览器地址栏打开 `chrome://version`，看"可执行文件路径" |
 | Linux 用 `Chromium` 报缺少系统库 | `sudo uv run playwright install-deps chromium` |
 | 卡在加载 / 不跳下一课 / 新版 AI 课刷不了 | 页面结构还没适配。先跑下面的诊断命令，再带着输出提 issue |
 
-只读诊断命令，都会拦掉进度上报，不产生学习记录（Windows 上把 `./run.sh` 换成 `uv run python Autovisor.py`）：
+只读诊断命令，都会拦掉进度上报，不产生学习记录（Windows 上在命令行里把 `./run.sh` 换成 `run.cmd`）：
 
 ```bash
 ./run.sh --check-browser                        # 浏览器能不能启动、有没有登录
@@ -142,9 +124,10 @@ uv run python Autovisor.py
 ```
 Autovisor/
 ├── README.md
-├── Autovisor.py              入口：读配置、开浏览器、登录、逐门课播放；--check-* 诊断也从这里进
-├── run.sh                    Linux / macOS 源码运行入口（第一次自动部署环境）
+├── run.cmd                   入口（Windows）：双击运行；第一次生成配置，之后自动准备环境并运行
+├── run.sh                    入口（Linux / macOS）：同上
 ├── run_macos.sh              旧入口，等同于 run.sh
+├── Autovisor.py              程序主体：读配置、开浏览器、登录、逐门课播放；--check-* 诊断也从这里进
 ├── config.ini.example        配置模板：Windows
 ├── config.linux.ini.example  配置模板：Linux
 ├── config.macos.ini.example  配置模板：macOS

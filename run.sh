@@ -8,7 +8,7 @@ case "$(uname -s)" in
     Darwin) PLATFORM=macos ;;
     Linux)  PLATFORM=linux ;;
     *)
-        echo "[ERROR] 不支持的系统: $(uname -s). Windows 请使用发行版 Autovisor.exe." >&2
+        echo "[ERROR] 不支持的系统: $(uname -s). Windows 请双击 run.cmd." >&2
         exit 1
         ;;
 esac
@@ -40,6 +40,7 @@ ini_value() {
 # 解析参数：识别 --config 与自身开关 --setup(不转发给程序)
 force_setup=false
 has_config=false
+has_other=false
 config_file=""
 forward=()
 args=("$@")
@@ -65,6 +66,7 @@ while [ "$idx" -lt "${#args[@]}" ]; do
             fi
             ;;
         *)
+            has_other=true
             forward+=("$cur")
             ;;
     esac
@@ -170,6 +172,24 @@ signature() {
         fi
     } | sha256 | awk '{print $1}'
 }
+
+# 第一次运行：没有配置文件就从模板生成一份，让用户填好课程地址再来
+if [ ! -f "$config_file" ] && [ "$config_file" = "config.$PLATFORM.ini" ] && [ -f "config.$PLATFORM.ini.example" ]; then
+    cp "config.$PLATFORM.ini.example" "$config_file"
+    chmod 600 "$config_file"
+    echo "[setup] 已生成配置文件 $config_file"
+    echo "        用文本编辑器打开它，在 [course-url] 下面把 URL1 填成课程播放页的地址"
+    echo "        （能直接看到视频的那一页），保存后再运行一次 ./run.sh"
+    exit 0
+fi
+
+# 正式运行(没有 --check-* 之类的参数)却一个课程地址都没填: 先说清楚, 不必等部署完再报错
+if [ "$has_other" = false ] && [ -f "$config_file" ] \
+    && ! grep -Eiq '^[[:space:]]*URL[0-9n]*[[:space:]]*=[[:space:]]*https://' "$config_file"; then
+    echo "[提示] $config_file 里还没有填课程地址。" >&2
+    echo "       在 [course-url] 下面把 URL1 填成课程播放页的地址，保存后再运行 ./run.sh" >&2
+    exit 1
+fi
 
 if [ "$force_setup" = true ]; then
     echo "===== Autovisor 强制环境部署 ====="
