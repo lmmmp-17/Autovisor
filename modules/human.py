@@ -5,6 +5,7 @@
 同一个区间里。
 """
 import asyncio
+import math
 import random
 
 _rng = random.SystemRandom()
@@ -35,17 +36,28 @@ def gauss_within(low: float, high: float) -> float:
     return min(high, max(low, value))
 
 
-def jitter(base: float, spread: float = 0.35) -> float:
-    value = base * _rng.uniform(1 - spread, 1 + spread)
-    if chance(0.08):
-        value *= _rng.uniform(1.3, 2.1)
-    return value
+# 停顿时长的离散度。本地靶场实测: 真人连续操作的间隔变异系数(标准差/均值)
+# 是 0.45~0.49, 而「区间内均匀取值」只有 0.17~0.28——同样是随机, 但分布形状
+# 和真人不是一回事。真人的停顿是「多数偏短、偶尔拖很久」, 正是对数正态的形状。
+# 对数正态的变异系数 = sqrt(e^(σ²) − 1), σ=0.45 时约 0.47。
+DISPERSION = 0.45
 
 
-async def sleep(base: float, spread: float = 0.35) -> None:
-    """以 base 秒为中心抖动的等待。"""
+def lognormal(median: float, sigma: float = DISPERSION) -> float:
+    """以 median 为中位数的对数正态取样。"""
+    return median * math.exp(_rng.gauss(0, sigma))
+
+
+def jitter(base: float, spread: float = DISPERSION) -> float:
+    """以 base 为中位数抖动; 封顶只为挡极端值, 不是为了收窄分布。"""
+    return min(base * 3, max(base * 0.4, lognormal(base, spread)))
+
+
+async def sleep(base: float, spread: float = DISPERSION) -> None:
+    """以 base 秒为中位数抖动的等待。"""
     await asyncio.sleep(jitter(base, spread))
 
 
 async def sleep_between(low: float, high: float) -> None:
-    await asyncio.sleep(_rng.uniform(low, high))
+    """[low, high] 是常见区间: 取中点作中位数, 下限仍是 low, 上限留长尾。"""
+    await asyncio.sleep(min(high * 3, max(low, lognormal((low + high) / 2))))

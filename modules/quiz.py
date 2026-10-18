@@ -17,6 +17,8 @@
 
 依旧不尝试答对: 判断对错要另外一套东西, 不在这里的职责范围内。
 """
+import asyncio
+
 from playwright.async_api import Page
 from playwright._impl._errors import TargetClosedError
 
@@ -50,8 +52,15 @@ OPTION = f"{QUESTION_PANEL} .topic-list .topic-item"
 # 单次点击的等待上限: 弹题上的元素要么在, 要么这道题不长这样
 OPTION_CLICK_TIMEOUT_MS = 4000
 
-# 看到弹题之后的读题时间
-READ_QUESTION_S = (2.5, 7.0)
+# 读题时间按题目的文字量算, 不是一个与内容无关的固定区间。
+#
+# 本地靶场实测: 真人的「作答用时 ~ 题干长度」相关系数稳定在 +0.81~+0.99,
+# 因为用时确实由题干长度驱动; 而固定区间的随机等待与内容无关, 相关系数
+# 期望为 0。所以这里按字数估算, 再抖动。
+READ_BASE_S = 1.2            # 弹窗出现到看清题目在哪、是什么题型
+READ_SPEED_CPS = (4.5, 9.0)  # 中文阅读速度, 字/秒
+READ_MIN_S = 1.8
+READ_MAX_S = 25.0
 # 选项之间、题目之间
 BETWEEN_OPTIONS_S = (0.6, 1.8)
 BETWEEN_QUESTIONS_S = (1.2, 3.5)
@@ -89,6 +98,28 @@ def pick_options(count: int, multiple: bool) -> list[int]:
     return sorted(human.sample(range(count), how_many))
 
 
+def reading_seconds(chars: int) -> float:
+    """读 chars 个字需要多久。速度取区间中部附近, 保证用时主要由字数决定。"""
+    speed = human.gauss_within(*READ_SPEED_CPS)
+    return min(READ_MAX_S, max(READ_MIN_S, READ_BASE_S + max(0, chars) / speed))
+
+
+async def read_current_question(page: Page) -> float:
+    """按当前这道题的文字量停一会儿再动手, 返回实际停了多久。"""
+    chars = 0
+    topic = page.locator(QUESTION).first
+    try:
+        if await topic.count():
+            chars = len((await topic.inner_text() or "").strip())
+    except TargetClosedError:
+        raise
+    except Exception as exc:
+        logger.debug_throttled("quiz:read", f"读题干失败: {logger.summarize_exception(exc)}")
+    seconds = reading_seconds(chars)
+    await asyncio.sleep(seconds)
+    return seconds
+
+
 async def question_is_multiple(page: Page) -> bool:
     kind = page.locator(QUESTION_KIND).first
     if not await kind.count():
@@ -106,6 +137,7 @@ async def _click_option(page: Page, index: int) -> bool:
 
 async def answer_one_question(page: Page) -> bool:
     """给当前显示的这道题作答。选了返回 True。"""
+    await read_current_question(page)
     count = await page.locator(OPTION).count()
     multiple = await question_is_multiple(page)
     choices = pick_options(count, multiple)
@@ -143,8 +175,8 @@ async def answer_visible_questions(page: Page) -> tuple[int, int, int]:
     if total == 0:
         return 0, 0, 0
 
-    # 弹题刚出来先读一会儿题, 再动手
-    await human.sleep_between(*READ_QUESTION_S)
+    # 弹窗刚弹出来, 先反应一下; 具体的读题时间按每道题的字数另算
+    await human.sleep_between(0.6, 1.8)
 
     answered = 0
     already = 0

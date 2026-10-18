@@ -1,7 +1,7 @@
 import time
 from enum import Enum
 
-from playwright.async_api import Page
+from playwright.async_api import Page, TimeoutError
 
 from modules.course_playback import elapsed_minutes, learn_lesson, review_lesson
 from modules.lesson_navigation import (
@@ -22,6 +22,10 @@ LESSON_CLICK_TIMEOUT_MS = 10_000
 
 # 目录节点在 detect_catalog 里刚确认过存在, 这里只做一次快速复核。
 CATALOG_ATTACH_TIMEOUT_MS = 5_000
+
+# 等课时里的 video 出现。等不到就说明这一节不是视频(计分测验、PPT/PDF 等),
+# 跳过去学下一个, 不要卡在这里, 也不要让整门课失败。
+VIDEO_ATTACH_TIMEOUT_MS = 10_000
 
 
 class CourseOutcome(Enum):
@@ -83,6 +87,7 @@ async def run_course(
 
     start_time = time.time()
     paused_time = 0.0
+    skipped: list[str] = []
     for index, lesson in enumerate(lessons):
         position = f"{index + 1}/{len(lessons)}"
         playback_enabled.clear()
@@ -116,7 +121,17 @@ async def run_course(
         )
         lesson_start = time.time()
         page.set_default_timeout(10000)
-        await page.wait_for_selector("video", state="attached")
+        try:
+            await page.wait_for_selector(
+                "video", state="attached", timeout=VIDEO_ATTACH_TIMEOUT_MS
+            )
+        except TimeoutError:
+            # 计分的测验、课件这类课时不在我们的职责范围内, 需要你自己完成。
+            # 以前这里会抛出超时, 整门课就此中断; 现在跳过去学下一个视频。
+            skipped.append(title)
+            logger.info(f'"{title}" 没有视频(多半是测验或课件), 跳过.', shift=True)
+            logger.event("课时跳过", 序号=position, 标题=title, 原因="没有视频")
+            continue
         playback_enabled.set()
 
         if learning:
@@ -168,5 +183,14 @@ async def run_course(
         print("==" * 10)
     else:
         logger.info(f'"{title}" 已完成!', shift=True)
-    logger.event("课程结果", 结果="全部完成", 课时数=len(lessons))
+    if skipped:
+        logger.info(
+            f"其中 {len(skipped)} 个课时没有视频(测验或课件), 已跳过, 需要你自己完成: "
+            + "、".join(skipped[:5])
+            + ("…" if len(skipped) > 5 else ""),
+            shift=True,
+        )
+    logger.event(
+        "课程结果", 结果="全部完成", 课时数=len(lessons), 跳过=len(skipped)
+    )
     return CourseOutcome.COMPLETED

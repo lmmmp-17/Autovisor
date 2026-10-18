@@ -3,6 +3,7 @@
 桩页面(fixtures/quiz_popup.html)只接受 isTrusted 事件, 并记录每道题最终选中的
 位置和点击次数, 所以"答案是不是固定落在同一个位置"可以直接断言。
 """
+import math
 import os
 import threading
 import unittest
@@ -16,6 +17,44 @@ from modules import quiz
 
 ENABLED = os.environ.get("AUTOVISOR_E2E") == "1"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+class ReadingTimeTests(unittest.TestCase):
+    """读题时间要由题干长度决定, 而不是一个与内容无关的随机区间。
+
+    本地靶场实测: 真人的「作答用时 ~ 题干长度」相关系数稳定在 +0.81~+0.99,
+    而固定区间的随机等待相关系数期望为 0、单次方差极大。
+    """
+
+    LENGTHS = (12, 25, 40, 60, 85, 120)
+
+    @staticmethod
+    def _pearson(xs, ys):
+        mx = sum(xs) / len(xs)
+        my = sum(ys) / len(ys)
+        num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        den = math.sqrt(sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys))
+        return num / den if den else 0.0
+
+    def test_longer_questions_take_longer_to_read(self):
+        means = [
+            sum(quiz.reading_seconds(n) for _ in range(400)) / 400
+            for n in self.LENGTHS
+        ]
+        self.assertEqual(means, sorted(means), f"字数越多用时应越长, 实际 {means}")
+
+    def test_correlation_with_length_stays_high(self):
+        # 真人基线是 +0.81~+0.99; 每一轮(六道题)都应当落在这个量级
+        worst = min(
+            self._pearson(self.LENGTHS, [quiz.reading_seconds(n) for n in self.LENGTHS])
+            for _ in range(200)
+        )
+        self.assertGreater(worst, 0.7, f"最差一轮的相关系数只有 {worst:.3f}")
+
+    def test_stays_within_sane_bounds(self):
+        values = [quiz.reading_seconds(n) for n in (0, 1, 500) for _ in range(200)]
+        self.assertGreaterEqual(min(values), quiz.READ_MIN_S)
+        self.assertLessEqual(max(values), quiz.READ_MAX_S)
 
 
 class PickOptionsTests(unittest.TestCase):
@@ -179,7 +218,7 @@ class QuizAnsweringE2E(unittest.IsolatedAsyncioTestCase):
 
         with mock.patch.object(quiz.human, "sleep_between", record):
             await quiz.answer_visible_questions(self.page)
-        self.assertEqual(calls[0], quiz.READ_QUESTION_S, "动手之前应当先有读题停顿")
+        self.assertEqual(calls[0], (0.6, 1.8), "弹窗刚出来应当先反应一下")
         self.assertIn(quiz.BETWEEN_QUESTIONS_S, calls, "题目之间应当有停顿")
         self.assertEqual(calls[-1], quiz.BEFORE_DISMISS_S, "关掉弹窗之前应当有停顿")
 
