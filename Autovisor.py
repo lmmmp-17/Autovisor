@@ -301,7 +301,12 @@ async def main(config) -> bool:
                 if not session.attached:
                     await persist_login_cookies(context)
             except Exception as exc:
-                logger.log_exception("刷新登录 Cookies 失败.", exc)
+                # 浏览器已经被关掉时存不了 Cookie 是必然的, 不是错误;
+                # 再报一行 [ERROR] 会和后面那句"正常结束"自相矛盾。
+                if "has been closed" in str(exc):
+                    logger.debug(f"浏览器已关闭, 跳过刷新登录 Cookies: {exc}")
+                else:
+                    logger.log_exception("刷新登录 Cookies 失败.", exc)
             finally:
                 await session.close()
 
@@ -450,7 +455,7 @@ def cli() -> int:
             logger.info("浏览器已关闭, 程序结束.", shift=True)
             logger.info("如果不是你手动关的, 重新运行一次即可.", shift=True)
             logger.debug(f"底层异常: {logger.summarize_exception(exc)}")
-            logger.save()
+            # 不在这里 save: finally 里统一存一次, 否则日志路径会打印两遍
             return 1
         logger.log_exception("程序运行时出现未处理异常.", exc, shift=True)
         if isinstance(exc, KeyError):

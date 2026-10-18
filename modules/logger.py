@@ -6,6 +6,13 @@ import traceback
 
 from modules.console import ensure_cjk_safe_stdio
 
+
+def _is_terminal() -> bool:
+    try:
+        return bool(sys.stdout.isatty())
+    except Exception:
+        return False
+
 ensure_cjk_safe_stdio()
 
 # 用于在记录日志来源时跳过日志系统自身的栈帧
@@ -172,28 +179,30 @@ class Logger:
         self._throttled[key] = (now, 0)
         return folded
 
-    def info(self, msg, shift=False):
-        if shift:
-            text = f"\r\n\033[32m[INFO]\033[0m {msg}"
+    def _print(self, tag, color, msg, shift):
+        """打一行带标签的日志。
+
+        终端里要先用 \r 回到行首、必要时换行, 把可能停在那里的进度条顶掉,
+        再用 ljust 把残留字符盖掉。但输出被重定向到文件或管道时 \r 不覆盖
+        任何东西: shift 的那个 \n 会凭空多出一个空行, ljust 还会在每行尾部
+        补一堆空格。所以非终端时就老老实实打一行。
+        """
+        if _is_terminal():
+            head = "\r\n" if shift else "\r"
+            print(f"{head}\033[{color}m[{tag}]\033[0m {msg}".ljust(50))
         else:
-            text = f"\r\033[32m[INFO]\033[0m {msg}"
-        print(text.ljust(50))
+            print(f"[{tag}] {msg}")
+
+    def info(self, msg, shift=False):
+        self._print("INFO", "32", msg, shift)
         self.write_log(f"{msg}\n", level="INFO")
 
     def warn(self, msg, shift=False):
-        if shift:
-            text = f"\r\n\033[33m[WARN]\033[0m {msg}"
-        else:
-            text = f"\r\033[33m[WARN]\033[0m {msg}"
-        print(text.ljust(50))
+        self._print("WARN", "33", msg, shift)
         self.write_log(f"{msg}\n", level="WARN")
 
     def error(self, msg, shift=False, with_context=True):
-        if shift:
-            text = f"\r\n\033[31m[ERROR]\033[0m {msg}"
-        else:
-            text = f"\r\033[31m[ERROR]\033[0m {msg}"
-        print(text.ljust(50))
+        self._print("ERROR", "31", msg, shift)
         self.write_log(f"{msg}\n", level="ERROR")
         if with_context:
             state = self.context_text()

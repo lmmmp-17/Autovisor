@@ -14,6 +14,7 @@ from modules.lesson_navigation import (
     lesson_is_complete,
     lesson_progress,
 )
+from modules.login import is_login_page
 from modules.tasks import has_visible_verification
 from modules.utils import load_cookies
 
@@ -30,20 +31,25 @@ async def check_browser(config, logger, cookie_path: str) -> int:
                 wait_until="commit",
                 timeout=15000,
             )
-            # 登录态无效时平台会跳到登录中心, 跳转要几秒。以前这里只等 1000ms,
-            # 跳转还没发生就去读 url, 于是没登录也报"检查通过", 标题还是空的。
+            # 登录态无效时平台会跳到登录中心, 跳转要几秒, 而且不止一跳: 实测是
+            #   onlinestuh5 → passport.zhihuishu.com → login.zhihuishu.com
+            # 所以要用 login.py 里那组登录域名判断, 只认 passport 会在页面已经
+            # 落到 login.zhihuishu.com 之后判成"通过"。
             browser_name = get_effective_driver(config.driver)
             try:
                 await session.page.wait_for_load_state("load", timeout=15000)
             except PlaywrightTimeoutError:
                 pass
             try:
-                await session.page.wait_for_url(
-                    lambda url: "passport.zhihuishu.com" in url, timeout=6000
-                )
+                await session.page.wait_for_url(is_login_page, timeout=8000)
             except PlaywrightTimeoutError:
                 pass  # 没跳走, 多半是登录态有效
-            if "passport.zhihuishu.com" in session.page.url:
+            # 跳转链还没走完时再给一会儿, 停住了就提前退出
+            for _ in range(10):
+                if is_login_page(session.page.url):
+                    break
+                await session.page.wait_for_timeout(500)
+            if is_login_page(session.page.url):
                 logger.warn(f"{browser_name} 已连接, 但智慧树登录状态无效.", shift=True)
                 logger.info("在打开的浏览器里登录一次, 之后会记住.", shift=True)
                 return 1

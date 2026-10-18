@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import re
 import tempfile
@@ -214,3 +216,33 @@ class SummarizeExceptionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CapturedOutputTests(unittest.TestCase):
+    """输出被重定向到文件或管道时不要带终端控制符。
+
+    终端里用 \\r 回到行首、ljust 盖掉残留，是为了把可能停在那里的进度条顶掉；
+    但 \\r 在文件里不覆盖任何东西，shift 的那个 \\n 会凭空多一个空行，
+    ljust 还会给每行补一串尾部空格。
+    """
+
+    def _render(self, terminal):
+        buffer = io.StringIO()
+        with mock.patch("modules.logger._is_terminal", lambda: terminal), \
+             contextlib.redirect_stdout(buffer):
+            logger = Logger()
+            logger.info("准备开始", shift=True)
+            logger.info("第二行")
+        return buffer.getvalue()
+
+    def test_no_stray_blank_lines_or_padding_when_captured(self):
+        output = self._render(terminal=False)
+        self.assertNotIn("\r", output)
+        self.assertEqual(output.splitlines(), ["[INFO] 准备开始", "[INFO] 第二行"])
+        for line in output.splitlines():
+            self.assertEqual(line, line.rstrip(), "行尾不应有填充空格")
+
+    def test_terminal_still_clears_the_progress_line(self):
+        output = self._render(terminal=True)
+        self.assertIn("\r", output)
+        self.assertIn("\033[32m", output, "终端里保留颜色")
