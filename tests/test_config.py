@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import stat
 import tempfile
@@ -86,3 +88,59 @@ class ConfigTests(unittest.TestCase):
             now=100,
         )
         self.assertTrue(cookies[0]["httpOnly"])
+
+
+class BlankCourseUrlTests(unittest.TestCase):
+    """模板里 URL2~URLn 默认是空的, 没填不是错。
+
+    以前每条空值都会打印一行 '"" 不是一个有效网址,将忽略该网址.', 一次启动
+    刷四行, 真正填错的那条反而被淹没。
+    """
+
+    def _urls(self, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.ini")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(body)
+            mirrors = os.path.join(tmp, "mirrors.json")
+            with open(mirrors, "w", encoding="utf-8") as handle:
+                handle.write('{"官方": "https://pypi.org/simple"}')
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                config = Config(path, mirrors)
+            return config.course_urls, buffer.getvalue()
+
+    BODY = """[user-account]
+username =
+password =
+
+[browser-option]
+driver = Chrome
+EXE_PATH =
+
+[script-option]
+enableAutoCaptcha = False
+enableHideWindow = False
+showDonateCode = False
+
+[course-option]
+limitMaxTime = 30
+limitSpeed = 0
+soundOff = True
+
+[course-url]
+URL1 = {url1}
+URL2 =
+URL3 =
+URLn =
+"""
+
+    def test_blank_urls_are_silent(self):
+        urls, output = self._urls(self.BODY.format(url1="https://example.com/x"))
+        self.assertEqual(urls, ["https://example.com/x"])
+        self.assertNotIn("不是一个有效网址", output)
+
+    def test_a_real_typo_is_still_reported(self):
+        urls, output = self._urls(self.BODY.format(url1="不是网址"))
+        self.assertEqual(urls, [])
+        self.assertIn("不是一个有效网址", output)

@@ -1,5 +1,6 @@
 # encoding=utf-8
 import random
+import sys
 from playwright.async_api import Page, TimeoutError
 from modules.lesson_navigation import (
     CatalogSelectors,
@@ -9,6 +10,31 @@ from modules.lesson_navigation import (
 from modules.logger import Logger
 
 logger = Logger()
+
+# 进度条靠 \r 在同一行刷新, 这在终端里没问题; 但输出被重定向到文件或管道时
+# \r 不会覆盖任何东西, 一次下载能刷出几 MB 的日志(实测 8.3MB)。
+# 非终端环境下改成每满 10% 落一行。
+_PROGRESS_STEP = 10
+_last_step: dict[str, int] = {}
+
+
+def _is_terminal() -> bool:
+    try:
+        return bool(sys.stdout.isatty())
+    except Exception:
+        return False
+
+
+def _emit(desc: str, line: str, percent: int) -> None:
+    if _is_terminal():
+        print(f"\r{line}".ljust(50), end="", flush=True)
+        return
+    # 同一个十分位只落一行; 100% 单独算一档, 保证收尾那条一定打出来
+    step = 10 if percent >= 100 else percent // _PROGRESS_STEP
+    if _last_step.get(desc) == step:
+        return
+    _last_step[desc] = step
+    print(line.strip(), flush=True)
 
 
 # 视频区域内移动鼠标
@@ -45,7 +71,7 @@ def show_course_progress(desc, cur_time=None, limit_time=0):
         percent = parse_progress_value(str(cur_time).rstrip("%"))
         length = int(percent * 30 // 100)
         progress = ("█" * length).ljust(30, " ")
-        print(f"\r{desc} |{progress}| {percent}%\t".ljust(50), end="", flush=True)
+        _emit(desc, f"{desc} |{progress}| {percent}%\t", percent)
     else:
         cur_time = 0 if cur_time == '' or cur_time is None else cur_time
         if isinstance(cur_time, str):
@@ -57,15 +83,15 @@ def show_course_progress(desc, cur_time=None, limit_time=0):
         percent = max(0, min(percent, 100))
         length = int(percent * 20 // 100)
         progress = ("█" * length).ljust(20, " ")
-        print(f"\r{desc} |{progress}| {percent}%\t剩余 {left_time} min\t".ljust(50), end="", flush=True)
+        _emit(desc, f"{desc} |{progress}| {percent}%\t剩余 {left_time} min\t", percent)
 
 
 # 打印通用版进度条
 def show_progress(desc, current, total, suffix="", width=30):
     if total <= 0:
-        print(f"\r{desc} 已下载 {current} bytes\t{suffix}".ljust(50), end="", flush=True)
+        _emit(desc, f"{desc} 已下载 {current} bytes\t{suffix}", 0)
         return
-    percent = int(current / total * 100)
+    percent = 100 if current >= total else int(current / total * 100)
     length = int(percent * width // 100)
     progress = ("█" * length).ljust(width, " ")
-    print(f"\r{desc} |{progress}| {percent}%\t{suffix}".ljust(50), end="", flush=True)
+    _emit(desc, f"{desc} |{progress}| {percent}%\t{suffix}", percent)

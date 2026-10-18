@@ -62,7 +62,7 @@ URL2 =                 ; 多门课就往下填
 - 程序会打开浏览器 → 登录（没填账号就等你手动登录，登录页的滑块也要手动拖）→ 按配置里的顺序逐门课播放。
 - 按 `Ctrl+C` 停止。
 
-Windows 上的 `run.cmd` 我没有在真机上跑过，CI 只在 Windows 上跑了单元测试。遇到问题请把命令行窗口里的输出贴出来。
+`run.cmd` 在 Windows 11 上实测跑通：生成配置、用记事本打开、`uv sync --extra captcha` 装好 Python 3.13 和依赖、用改过的参数拉起 Edge。遇到问题请把命令行窗口里的输出贴出来。
 
 ### 可选：连接你已经开着的 Chrome
 
@@ -108,7 +108,7 @@ Windows 上的 `run.cmd` 我没有在真机上跑过，CI 只在 Windows 上跑�
 | Linux 用 `Chromium` 报缺少系统库 | `sudo uv run playwright install-deps chromium` |
 | 卡在加载 / 不跳下一课 / 新版 AI 课刷不了 | 页面结构还没适配。先跑下面的诊断命令，再带着输出提 issue |
 
-只读诊断命令，都会拦掉进度上报，不产生学习记录（Windows 上在命令行里把 `./run.sh` 换成 `run.cmd`）：
+只读诊断命令，都会拦掉进度上报，不产生学习记录。Windows 上在命令行里把 `./run.sh` 换成 `.\run.cmd`，前面的 `.\` 不能省：
 
 ```bash
 ./run.sh --check-browser                        # 浏览器能不能启动、有没有登录

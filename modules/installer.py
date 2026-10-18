@@ -307,10 +307,16 @@ def install_package(package, version, mirrors, config_obj=config):
 
 # 下载器,启动!
 def start(config_obj=config):
-    if os.name != "nt":
+    # 这一套"自己下 wheel 解压到 packages/"是给 Windows 发行版(Autovisor.exe)用的:
+    # 那里没有 pip。源码运行时依赖由 uv 按 uv.lock 装在 .venv 里, 再跑这一套会把
+    # 另一个版本下到 packages/, 和 .venv 里的对不上, 而且每次启动都要重下一遍。
+    if os.name != "nt" or not getattr(sys, "frozen", False):
         modules = []
         missing = []
-        for package in packages:
+        # 这里原来写的是 for package in packages, 而 packages 这个名字根本不存在:
+        # 非 Windows 分支只要走到就会 NameError。模板默认 enableAutoCaptcha = False,
+        # 所以一直没人踩到。
+        for package in runtime_packages():
             try:
                 modules.append(import_module(mapping[package]))
             except ImportError:
@@ -318,7 +324,9 @@ def start(config_obj=config):
         if missing:
             names = ", ".join(missing)
             raise RuntimeError(
-                f"缺少自动滑块依赖: {names}; 请运行 uv sync --extra captcha"
+                f"缺少自动滑块依赖: {names}。"
+                "源码运行请执行 uv sync --extra captcha 后重试; "
+                "不需要自动过滑块的话, 把配置里的 enableAutoCaptcha 改成 False 即可。"
             )
         return modules
 

@@ -100,6 +100,9 @@ class Config:
         _options = self._config.options("course-url")
         for _option in _options:
             course_url = self._config.get("course-url", _option, raw=True)
+            # 模板里 URL2~URLn 都是空的, 没填不是错, 不用每条都唠叨一遍
+            if not course_url.strip():
+                continue
             matched = re.findall(self.course_match_rule, course_url)
             if not matched:
                 print(f"\"{course_url.strip()}\"\n不是一个有效网址,将忽略该网址.")

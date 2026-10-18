@@ -445,6 +445,13 @@ def cli() -> int:
                         "Linux 用 config.linux.ini.example, Windows 用 config.ini.example。")
         exit_code = 1
     except Exception as exc:
+        # 用户自己把浏览器关掉是最常见的结束方式, 不该甩一串 playwright 堆栈
+        if "has been closed" in str(exc):
+            logger.info("浏览器已关闭, 程序结束.", shift=True)
+            logger.info("如果不是你手动关的, 重新运行一次即可.", shift=True)
+            logger.debug(f"底层异常: {logger.summarize_exception(exc)}")
+            logger.save()
+            return 1
         logger.log_exception("程序运行时出现未处理异常.", exc, shift=True)
         if isinstance(exc, KeyError):
             logger.error(f"配置文件错误!")

@@ -5,7 +5,7 @@ from pathlib import Path
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
-from modules.browser import create_browser_session
+from modules.browser import create_browser_session, get_effective_driver
 from modules.pointer import human_click, pointer_for
 from modules.lesson_navigation import (
     CATALOGS,
@@ -30,11 +30,32 @@ async def check_browser(config, logger, cookie_path: str) -> int:
                 wait_until="commit",
                 timeout=15000,
             )
-            await session.page.wait_for_timeout(1000)
-            if "passport.zhihuishu.com/login" in session.page.url:
-                logger.warn("Chrome 已连接,但智慧树登录状态无效.", shift=True)
+            # 登录态无效时平台会跳到登录中心, 跳转要几秒。以前这里只等 1000ms,
+            # 跳转还没发生就去读 url, 于是没登录也报"检查通过", 标题还是空的。
+            browser_name = get_effective_driver(config.driver)
+            try:
+                await session.page.wait_for_load_state("load", timeout=15000)
+            except PlaywrightTimeoutError:
+                pass
+            try:
+                await session.page.wait_for_url(
+                    lambda url: "passport.zhihuishu.com" in url, timeout=6000
+                )
+            except PlaywrightTimeoutError:
+                pass  # 没跳走, 多半是登录态有效
+            if "passport.zhihuishu.com" in session.page.url:
+                logger.warn(f"{browser_name} 已连接, 但智慧树登录状态无效.", shift=True)
+                logger.info("在打开的浏览器里登录一次, 之后会记住.", shift=True)
                 return 1
-            logger.info(f"浏览器检查通过: {await session.page.title()}", shift=True)
+            title = (await session.page.title()).strip()
+            if not title:
+                logger.warn(
+                    f"{browser_name} 已连接, 但页面没有加载出来, 无法判断登录状态.",
+                    shift=True,
+                )
+                logger.info(f"当前地址: {session.page.url}", shift=True)
+                return 1
+            logger.info(f"浏览器检查通过: {title}", shift=True)
             return 0
         finally:
             await session.close()
