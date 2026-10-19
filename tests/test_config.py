@@ -144,3 +144,28 @@ URLn =
         urls, output = self._urls(self.BODY.format(url1="不是网址"))
         self.assertEqual(urls, [])
         self.assertIn("不是一个有效网址", output)
+
+
+class LimitSpeedTests(unittest.TestCase):
+    """limitSpeed 支持 max: 切到菜单里最高的一档。"""
+
+    def _speed(self, value):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.ini")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(BlankCourseUrlTests.BODY.format(url1="https://example.com/x")
+                             .replace("limitSpeed = 0", f"limitSpeed = {value}"))
+            mirrors = os.path.join(tmp, "mirrors.json")
+            with open(mirrors, "w", encoding="utf-8") as handle:
+                handle.write('{"官方": "https://pypi.org/simple"}')
+            return Config(path, mirrors).limitSpeed
+
+    def test_max_means_no_upper_bound(self):
+        self.assertEqual(self._speed("max"), float("inf"))
+        self.assertEqual(self._speed("MAX"), float("inf"))
+
+    def test_zero_still_means_hands_off(self):
+        self.assertEqual(self._speed("0"), 0.0)
+
+    def test_a_number_is_still_a_cap(self):
+        self.assertEqual(self._speed("1.25"), 1.25)

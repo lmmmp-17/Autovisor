@@ -141,23 +141,14 @@ async def video_optimize(page: Page, config: Config) -> None:
 
             # limitSpeed = 0 表示完全不碰倍速: 播放器自己记住的倍速也是用户的真实
             # 状态, 中途改它会产生一次 ratechange, 没必要。
-            if config.limitSpeed > 0 and rate != config.limitSpeed:
-                if await player.set_rate_by_menu(page, config.limitSpeed):
-                    changes.append(f"倍速 {rate}->{config.limitSpeed}(点菜单)")
-                else:
-                    await run_on(
-                        page,
-                        "video",
-                        f"(el) => {{ el.playbackRate = {config.limitSpeed}; }}",
-                        "设置倍速",
-                    )
-                    await run_on(
-                        page,
-                        ".speedBox span",
-                        f'(el) => {{ el.innerText = "X {config.limitSpeed}"; }}',
-                        "更新倍速标签",
-                    )
-                    changes.append(f"倍速 {rate}->{config.limitSpeed}(写属性)")
+            # limitSpeed = max 则切到菜单里最高的一档。
+            #
+            # 只用菜单里有的档位, 不再退回写 playbackRate: 菜单里没有的值只能靠
+            # 写属性加伪造标签文字, 页面一眼就能看出来, 而且那也不是平台允许的档位。
+            if config.limitSpeed > 0 and rate is not None and rate < config.limitSpeed:
+                chosen = await player.raise_rate(page, config.limitSpeed)
+                if chosen is not None and chosen != rate:
+                    changes.append(f"倍速 {rate}->{chosen}(点菜单)")
 
             if changes:
                 logger.event("播放器调节", 项目=", ".join(changes))

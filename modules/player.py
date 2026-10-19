@@ -104,18 +104,26 @@ async def current_rate_label(page: Page) -> float | None:
     return parse_rate_label(await label.inner_text())
 
 
-async def set_rate_by_menu(page: Page, rate: float) -> bool:
-    """用播放器的倍速菜单设成 rate。走通返回 True。
+def pick_rate(labels: list[float | None], cap: float) -> float | None:
+    """从菜单档位里挑不超过 cap 的最高一档。cap 为 inf 就是菜单里最高的那档。"""
+    usable = [value for value in labels if value and value <= cap]
+    return max(usable) if usable else None
 
-    这样倍速标签由播放器自己更新, 不需要我们去改写它的文字。
+
+async def raise_rate(page: Page, cap: float) -> float | None:
+    """用播放器的倍速菜单切到不超过 cap 的最高一档, 返回实际切到的档位。
+
+    只用菜单里列出来的档位: 那才是平台允许的, 倍速标签也由播放器自己更新。
+    菜单打不开或者没有合适的档位就返回 None, 保持原速——不去写 playbackRate,
+    那等于绕过平台自己的控件, 而且页面一眼就能看出来。
     """
     try:
         if not await reveal_controls(page):
             logger.debug_throttled("player:reveal", "倍速菜单跳过: 控制栏没有展开")
-            return False
+            return None
         if not await _open_speed_menu(page):
             logger.debug_throttled("player:speed_menu", "倍速菜单跳过: 选项没有出现")
-            return False
+            return None
 
         # 先把所有档位的文字读出来再动指针: 边读边移会白耗展开窗口
         tabs = page.locator(SPEED_TAB)
@@ -123,24 +131,25 @@ async def set_rate_by_menu(page: Page, rate: float) -> bool:
             parse_rate_label(await tabs.nth(i).inner_text())
             for i in range(await tabs.count())
         ]
-        if rate not in labels:
+        target = pick_rate(labels, cap)
+        if target is None:
             logger.debug_throttled(
                 "player:speed_absent",
-                f"倍速菜单里没有 {rate} 这一档, 可选: {[l for l in labels if l]}",
+                f"倍速菜单里没有不超过 {cap} 的档位, 可选: {[l for l in labels if l]}",
             )
-            return False
+            return None
 
-        await _move_onto(page, f"{SPEED_TAB} >> nth={labels.index(rate)}")
+        await _move_onto(page, f"{SPEED_TAB} >> nth={labels.index(target)}")
         await _click_here(page)
         await human.sleep_between(0.3, 0.6)
-        return await current_rate_label(page) == rate
+        return target if await current_rate_label(page) == target else None
     except TargetClosedError:
         raise
     except Exception as exc:
         logger.debug_throttled(
             "player:speed", f"倍速菜单操作失败: {logger.summarize_exception(exc)}"
         )
-        return False
+        return None
 
 
 async def mute_by_button(page: Page) -> bool:

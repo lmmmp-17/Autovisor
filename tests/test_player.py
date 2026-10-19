@@ -137,7 +137,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_set_rate_reports_failure_when_controls_stay_hidden(self):
         with mock.patch.object(player.human, "sleep", mock.AsyncMock()):
-            self.assertFalse(await player.set_rate_by_menu(_Page(), 1.5))
+            self.assertIsNone(await player.raise_rate(_Page(), 1.5))
 
     async def test_mute_reports_failure_when_controls_stay_hidden(self):
         with mock.patch.object(player.human, "sleep", mock.AsyncMock()):
@@ -215,7 +215,7 @@ class PlayerControlsE2E(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await tab.is_visible(), "悬停倍速框后选项应当出现")
 
     async def test_rate_is_set_by_clicking_the_menu(self):
-        self.assertTrue(await player.set_rate_by_menu(self.page, 1.5))
+        self.assertEqual(await player.raise_rate(self.page, 1.5), 1.5)
         self.assertEqual((await self.video_state())["rate"], 1.5)
         probe = await self.probe()
         self.assertEqual(probe["rejected"], [], f"出现不可信事件: {probe['rejected']}")
@@ -227,12 +227,17 @@ class PlayerControlsE2E(unittest.IsolatedAsyncioTestCase):
         # 标签由播放器自己更新, 不需要我们改写它
         self.assertEqual(await player.current_rate_label(self.page), 1.5)
 
-    async def test_rate_absent_from_the_menu_is_reported_not_forced(self):
-        # 1.8 不在菜单里: 必须返回 False 交给调用方决定, 不能偷偷写属性
-        self.assertFalse(await player.set_rate_by_menu(self.page, 1.8))
+    async def test_rate_absent_from_the_menu_falls_back_to_the_highest_below_it(self):
+        # 1.8 不在菜单里: 取不超过它的最高一档(1.5), 而不是写属性硬设 1.8
+        self.assertEqual(await player.raise_rate(self.page, 1.8), 1.5)
         probe = await self.probe()
         self.assertFalse([e for e in probe["log"] if e.startswith("rate-write")])
-        self.assertEqual((await self.video_state())["rate"], 1.0)
+        self.assertEqual((await self.video_state())["rate"], 1.5)
+
+    async def test_max_picks_the_highest_option_in_the_menu(self):
+        self.assertEqual(await player.raise_rate(self.page, float("inf")), 1.5)
+        self.assertEqual((await self.video_state())["rate"], 1.5)
+        self.assertEqual(await player.current_rate_label(self.page), 1.5)
 
     async def test_mute_is_set_by_clicking_the_volume_button(self):
         self.assertTrue(await player.mute_by_button(self.page))
@@ -262,3 +267,21 @@ class PlayerControlsE2E(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PickRateTests(unittest.TestCase):
+    """从菜单档位里挑一档: max 取最高, 给数字取不超过它的最高一档。"""
+
+    MENU = [1.5, 1.25, 1.0]
+
+    def test_max_takes_the_highest(self):
+        self.assertEqual(player.pick_rate(self.MENU, float("inf")), 1.5)
+
+    def test_cap_takes_the_highest_below_it(self):
+        self.assertEqual(player.pick_rate(self.MENU, 1.8), 1.5)
+        self.assertEqual(player.pick_rate(self.MENU, 1.25), 1.25)
+        self.assertEqual(player.pick_rate(self.MENU, 1.3), 1.25)
+
+    def test_nothing_usable_returns_none(self):
+        self.assertIsNone(player.pick_rate(self.MENU, 0.5))
+        self.assertIsNone(player.pick_rate([None, None], float("inf")))

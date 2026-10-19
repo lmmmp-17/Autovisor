@@ -128,9 +128,19 @@ class Config:
 
     @property
     def limitSpeed(self) -> float:
+        """倍速上限。
+
+        max  = 切到播放器倍速菜单里最高的一档(返回 inf, 由调用方取菜单最大值)
+        0/负 = 完全不碰倍速, 保持播放器自己的状态(不产生 ratechange)
+        数字 = 取菜单里不超过它的最高一档
+        """
         self._read_config()
+        raw = self._config.get(
+            'course-option', 'limitSpeed', raw=True, fallback=''
+        ).strip().lower()
+        if raw in ('max', '最高'):
+            return float('inf')
         speed = self._safe_get_float('course-option', 'limitSpeed', 1.0)
-        # 0 或负数 = 不干预倍速, 保持播放器自己的状态(不产生 ratechange)
         if speed <= 0:
             return 0.0
         return min(max(speed, 0.5), 1.8)
