@@ -127,6 +127,16 @@ class Config:
         return self._safe_get_float('course-option', 'limitMaxTime', 0.0)
 
     @property
+    def limitSpeedLabel(self) -> str:
+        """给日志看的倍速说法: inf 打成 "max" 比打 "inf" 直观。"""
+        speed = self.limitSpeed
+        if speed == float('inf'):
+            return 'max(菜单里最高的一档)'
+        if speed <= 0:
+            return '0(不干预)'
+        return f'不超过 {speed}'
+
+    @property
     def limitSpeed(self) -> float:
         """倍速上限。
 

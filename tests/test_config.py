@@ -149,7 +149,8 @@ URLn =
 class LimitSpeedTests(unittest.TestCase):
     """limitSpeed 支持 max: 切到菜单里最高的一档。"""
 
-    def _speed(self, value):
+    def _read(self, value, attr):
+        # Config 的属性是懒加载、每次重读文件, 所以必须在临时目录还在的时候取值
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "config.ini")
             with open(path, "w", encoding="utf-8") as handle:
@@ -158,7 +159,13 @@ class LimitSpeedTests(unittest.TestCase):
             mirrors = os.path.join(tmp, "mirrors.json")
             with open(mirrors, "w", encoding="utf-8") as handle:
                 handle.write('{"官方": "https://pypi.org/simple"}')
-            return Config(path, mirrors).limitSpeed
+            return getattr(Config(path, mirrors), attr)
+
+    def _label(self, value):
+        return self._read(value, "limitSpeedLabel")
+
+    def _speed(self, value):
+        return self._read(value, "limitSpeed")
 
     def test_max_means_no_upper_bound(self):
         self.assertEqual(self._speed("max"), float("inf"))
@@ -169,3 +176,9 @@ class LimitSpeedTests(unittest.TestCase):
 
     def test_a_number_is_still_a_cap(self):
         self.assertEqual(self._speed("1.25"), 1.25)
+
+    def test_log_label_is_readable(self):
+        # 日志里打 "inf" 对用户没意义
+        self.assertEqual(self._label("max"), "max(菜单里最高的一档)")
+        self.assertEqual(self._label("0"), "0(不干预)")
+        self.assertEqual(self._label("1.25"), "不超过 1.25")

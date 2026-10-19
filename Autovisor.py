@@ -402,7 +402,7 @@ def cli() -> int:
             自动答题=config.enableAutoCaptcha,
             隐藏窗口=config.enableHideWindow,
             静音=config.soundOff,
-            倍速=config.limitSpeed,
+            倍速=config.limitSpeedLabel,
             时限分钟=config.limitMaxTime,
             课程数=len(config.course_urls),
             镜像源=len(config.mirrors),
