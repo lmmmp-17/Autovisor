@@ -31,7 +31,6 @@ from modules.login import (
 from modules.logger import Logger
 from modules.pointer import human_click
 from modules.slider import slider_verify
-from modules.support import show_donate
 from modules.tasks import (
     play_video,
     skip_questions,
@@ -324,7 +323,6 @@ async def main(config) -> bool:
         logger.info("所有课程已学习完毕!")
     else:
         logger.info("本轮已按每门课程时限结束,仍有课程未完成.", shift=True)
-    show_donate(get_runtime_path("resources", "QRcode.jpg"), show=config.showDonateCode)
     return True
 
 

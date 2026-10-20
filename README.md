@@ -101,23 +101,23 @@ Linux / macOS 可以用 `./run.sh --setup` 强制重建环境。Linux 用 `Chrom
 
    ```bash
    # Linux
-   google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio &
+   google-chrome --remote-debugging-port=9224 --user-data-dir="$HOME/autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio &
 
    # macOS
    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-     --remote-debugging-port=9222 --user-data-dir="$HOME/autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio &
+     --remote-debugging-port=9224 --user-data-dir="$HOME/autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio &
    ```
 
    ```bat
    :: Windows（cmd）
-   "%ProgramFiles%\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%USERPROFILE%\autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio
+   "%ProgramFiles%\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9224 --user-data-dir="%USERPROFILE%\autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio
    ```
 
    - 一定要加 `--mute-audio`：这个模式下程序管不到浏览器的启动参数，`soundOff` 只能去点播放器的静音按钮，视频刚开始的一两秒可能会有声音。
    - `--disable-backgrounding-occluded-windows` 也别漏：Windows 上不带它，窗口被别的窗口完全盖住不到 1 秒视频就停了。
 
 2. 在这个 Chrome 里登录智慧树。
-3. 配置里改成 `attachExistingChrome = True`（`cdpUrl` 默认就是 `http://127.0.0.1:9222`）。
+3. 配置里改成 `attachExistingChrome = True`（`cdpUrl` 默认就是 `http://127.0.0.1:9224`）。端口特意和学习通（9222）、雨课堂（9223）错开，三个工具可以同时跑。
 4. 照初级教程第 4 步运行。
 
 这个模式下程序不会把 Cookie 写进 `data/cookies.json`，结束时只关闭自己打开的标签页，也不会隐藏你的窗口。用完把这个 Chrome 关掉：调试端口开着时，本机的任何程序都能控制它。
@@ -356,7 +356,6 @@ Autovisor/
 | | `utils.py` | Cookie 读写、运行目录、窗口操作等杂项 |
 | | `installer.py` | 发行版运行时依赖的下载与校验 |
 | | `updater.py`、`version.py` | 检查更新、版本号 |
-| | `support.py` | 赞赏码 |
 
 ### 测试
 
@@ -368,11 +367,5 @@ AUTOVISOR_E2E=1 uv run python -m unittest tests.test_e2e_browser -v  # 真实浏
 `run.cmd` 在 Windows 11 上实测跑通过：生成配置、用记事本打开、`uv sync --extra captcha` 装好 Python 3.13 和依赖、用改过的参数拉起 Edge。
 
 ---
-
-觉得体验还不错? 请给上游项目留下你宝贵的 Star ⭐, 并分享给更多有需要的人! 或者为项目发电支持一下~
-
-<p align="left"><img src="resources/markdown/donate.png" width="200" alt="赞赏码"></p>
-
-**上游作者的 CSDN:** [欢迎关注~](https://blog.csdn.net/Runfreeone)
 
 **声明：本程序只可用于学习和研究计算机原理, 请于 24h 内删除所有存档！**

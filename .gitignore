@@ -4,7 +4,6 @@ packages/*
 data/*
 resources/*
 !data/mirrors.json
-!resources/QRcode.jpg
 !resources/zhs.ico
 !resources/markdown/
 .obsidian/

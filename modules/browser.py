@@ -54,7 +54,8 @@ def resolve_cdp_endpoint(
     active_port_path: Path | None = None,
 ) -> str:
     configured_url = configured_url.strip()
-    default_url = "http://127.0.0.1:9222"
+    # 默认端口和学习通 (9222)、雨课堂 (9223) 的专用浏览器错开, 三个工具才能同时跑
+    default_url = "http://127.0.0.1:9224"
     if configured_url and configured_url != default_url:
         return configured_url
 

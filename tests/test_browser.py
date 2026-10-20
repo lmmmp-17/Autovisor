@@ -47,7 +47,7 @@ class BrowserResolutionTests(unittest.TestCase):
             path = Path(root) / "DevToolsActivePort"
             path.write_text("9222\n/devtools/browser/test-id\n", encoding="utf-8")
             self.assertEqual(
-                resolve_cdp_endpoint("http://127.0.0.1:9222", path),
+                resolve_cdp_endpoint("http://127.0.0.1:9224", path),
                 "ws://127.0.0.1:9222/devtools/browser/test-id",
             )
 
@@ -293,3 +293,14 @@ class MainFlowWiringTests(unittest.TestCase):
         self.assertNotIn("stealth", source)
         # 连接模式下不能把用户真实浏览器的 Cookie 落盘
         self.assertIn("if not session.attached:\n                    await persist_login_cookies", source)
+
+
+class ParallelPortTests(unittest.TestCase):
+    def test_default_cdp_port_stays_clear_of_the_other_tools(self):
+        # 学习通的专用浏览器用 9222、雨课堂用 9223; 三个工具同时跑时连接模式不能撞上它们
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(resolve_cdp_endpoint("", Path(root) / "none"), "http://127.0.0.1:9224")
+        for name in ("config.ini.example", "config.linux.ini.example", "config.macos.ini.example"):
+            text = (Path(__file__).resolve().parent.parent / name).read_text(encoding="utf-8")
+            self.assertIn("cdpUrl = http://127.0.0.1:9224", text, name)
+            self.assertNotIn("showDonateCode", text, name)

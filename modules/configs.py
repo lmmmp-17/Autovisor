@@ -27,11 +27,10 @@ class Config:
             # 浏览器选项
             self.exe_path = self._config.get('browser-option', 'EXE_PATH', raw=True)
             self.attach_existing_chrome = self.get_bool_field('browser-option', 'attachExistingChrome', fallback=False)
-            self.cdp_url = self._config.get('browser-option', 'cdpUrl', raw=True, fallback='http://127.0.0.1:9222').strip()
+            self.cdp_url = self._config.get('browser-option', 'cdpUrl', raw=True, fallback='http://127.0.0.1:9224').strip()
             # 脚本选项
             self.enableAutoCaptcha = self.get_bool_field('script-option', 'enableAutoCaptcha')
             self.enableHideWindow = self.get_bool_field('script-option', 'enableHideWindow')
-            self.showDonateCode = self.get_bool_field("script-option", "showDonateCode")
             # 课程选项
             self.soundOff = self.get_bool_field('course-option', 'soundOff')
             self.course_match_rule = re.compile("https://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]")
