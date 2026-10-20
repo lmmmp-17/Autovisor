@@ -227,6 +227,9 @@ async def create_browser_session(
 #   - setWebLifecycleState('active'): 不让标签页进入冻结状态(Playwright 不发)
 #   - setIdleOverride: Idle Detection API 恒为"用户活跃、屏幕未锁"(Playwright 不发)
 # document.visibilityState 没有对应的 override, 窗口最小化仍会变成 hidden。
+# Windows 上窗口被完全盖住也会变 hidden, 视频直接暂停(实测 Chrome 155 / Win11)。
+# Playwright 启动浏览器时默认带的 --disable-backgrounding-occluded-windows 兜住了这一条,
+# 所以别把它加进 ignore_default_args; 连接已有 Chrome 时只能靠用户自己带。
 FOCUS_STEPS = (
     ("焦点模拟", "Emulation.setFocusEmulationEnabled", {"enabled": True}),
     ("阻止标签页冻结", "Page.setWebLifecycleState", {"state": "active"}),

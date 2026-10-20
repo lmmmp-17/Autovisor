@@ -227,6 +227,13 @@ class LaunchArgsTests(unittest.TestCase):
         self.assertIn("--mute-audio", _launch_args(_Quiet())["args"])
         self.assertNotIn("--mute-audio", _launch_args(_Loud())["args"])
 
+    def test_keeps_playwrights_occlusion_switch(self):
+        # Windows 上窗口被完全盖住会变 hidden, 视频直接停; Playwright 默认带的
+        # --disable-backgrounding-occluded-windows 兜住了这一条, 不能被忽略掉
+        ignored = _launch_args(_OwnedConfig()).get("ignore_default_args", [])
+        self.assertNotIn("--disable-backgrounding-occluded-windows", ignored)
+        self.assertNotEqual(ignored, True, "忽略全部默认参数也会把它一起去掉")
+
 
 class PreparePageTests(unittest.IsolatedAsyncioTestCase):
     async def test_owned_session_uses_window_sized_viewport_and_injects_nothing(self):

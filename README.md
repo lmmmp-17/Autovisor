@@ -72,19 +72,21 @@ URL2 =                 ; 多门课就往下填
 
    ```bash
    # Linux
-   google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/autovisor-chrome" --mute-audio &
+   google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio &
 
    # macOS
    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-     --remote-debugging-port=9222 --user-data-dir="$HOME/autovisor-chrome" --mute-audio &
+     --remote-debugging-port=9222 --user-data-dir="$HOME/autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio &
    ```
 
    ```bat
    :: Windows（cmd）
-   "%ProgramFiles%\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%USERPROFILE%\autovisor-chrome" --mute-audio
+   "%ProgramFiles%\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%USERPROFILE%\autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio
    ```
 
    一定要加 `--mute-audio`：这个模式下程序管不到浏览器的启动参数，`soundOff` 只能去点播放器的静音按钮，视频刚开始的一两秒可能会有声音。
+
+   `--disable-backgrounding-occluded-windows` 也别漏：Windows 上不带它，窗口被别的窗口完全盖住不到 1 秒视频就停了（普通模式由 Playwright 启动浏览器，默认带着这一项）。
 
 2. 在这个 Chrome 里登录智慧树。
 3. 配置里改成 `attachExistingChrome = True`（`cdpUrl` 默认就是 `http://127.0.0.1:9222`）。
@@ -94,7 +96,8 @@ URL2 =                 ; 多门课就往下填
 
 ### 运行期间注意
 
-- 浏览器窗口可以放到别的窗口**后面**，或者挪到另一个桌面，失焦不会打断播放。**不要最小化**，最小化后页面会变成后台状态，进度不涨。Windows 上想藏起来就用 `enableHideWindow = True`。
+- 浏览器窗口可以被别的窗口**盖住**，或者挪到另一个桌面，失焦不会打断播放。**不要最小化**，最小化后页面会变成后台状态，视频直接停。Windows 上想藏起来就用 `enableHideWindow = True`。
+- Windows 上「被盖住没事」靠的是 Chrome 启动参数 `--disable-backgrounding-occluded-windows`。普通模式下 Playwright 默认就带；连接已有 Chrome 时要照上面的命令自己带。
 - 程序运行时，别在那个浏览器窗口里动鼠标。
 - 长时间挂机可能弹出人机验证，程序检测到后会暂停，等你手动完成。
 
