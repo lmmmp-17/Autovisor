@@ -139,7 +139,7 @@ Autovisor/
 ├── tests/                    单元测试；test_e2e_browser.py 用真实浏览器跑
 ├── data/                     运行时数据：镜像源配置 mirrors.json、登录状态 cookies.json
 ├── resources/                图标、README 用的图片
-├── GUI.py                    图形界面（上游的，Windows 发行版用）
+（图形界面改由统一启动器 launcher 提供，见它的 README）
 ├── build.py                  打包 Windows 发行版（PyInstaller）
 ├── packages/                 Windows 发行版的运行时依赖（DLL；numpy、opencv 也会下载到这里）
 └── .github/workflows/        CI：三平台单元测试 + Linux / macOS 启动脚本
