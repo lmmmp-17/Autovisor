@@ -4,19 +4,17 @@
 
 fork 自 [CXRunfree/Autovisor](https://github.com/CXRunfree/Autovisor)，这个分支（`feat/low-fingerprint-cross-platform`）做了三件事：
 
-- **降低自动化特征**：不注入任何脚本，点击、滚动、输入都是浏览器生成的真实输入，倍速和静音改为点播放器自己的控件（详见[降低自动化特征](#降低自动化特征)）。
+- **降低自动化特征**：不注入任何脚本，点击、滚动、输入都是浏览器生成的真实输入，倍速和静音改为点播放器自己的控件（详见技术细节里的[降低自动化特征](#降低自动化特征)）。
 - **跨平台**：Linux、macOS 可以源码运行，三平台 CI。
 - **只读诊断命令**：适配新版页面时先看真实结构，不产生学习记录。
 
-> 上游的 Windows 发行版（`Autovisor.exe`）是上游打包的，**不包含本分支的改动**。想用本分支，请按下面的步骤源码运行。
+> 上游的 Windows 发行版（`Autovisor.exe`）是上游打包的，**不包含本分支的改动**。想用本分支，请按下面的教程源码运行。
 
----
-
-## 快速开始（源码运行）
+## 一、初级使用教程
 
 ### 1. 准备（只做一次）
 
-- **浏览器**：Windows 默认用 Edge，Linux / macOS 默认用 Google Chrome。也可以在配置里换。
+- **浏览器**：Windows 默认用 Edge，Linux / macOS 默认用 Google Chrome。
 - **下载这个仓库**：在 GitHub 页面点 **Code → Download ZIP** 解压；或者 `git clone https://github.com/lmmmp-17/Autovisor.git`。
 - **不需要自己装 Python**。入口脚本会用 [uv](https://docs.astral.sh/uv/) 准备好 Python 3.13 和全部依赖；没有 uv 的话：Linux / macOS 会自动装，Windows 会问你要不要用 winget 装。
 
@@ -39,7 +37,47 @@ URL1 = https://...     ; 课程播放页的地址（能直接看到视频的那�
 URL2 =                 ; 多门课就往下填
 ```
 
-其它项保持默认就能跑。常用的几项：
+其它项保持默认就能跑：默认静音、切到播放器允许的最高倍速、每门课最多跑 30 分钟。账号密码留空的话，就在打开的浏览器里手动登录，登录状态会存下来，下次不用再登。
+
+### 4. 再运行一次：开始刷课
+
+还是双击 `run.cmd`，或者执行 `./run.sh`。
+
+- 第一次会自动准备环境：uv、Python 3.13、依赖，要等一会儿。之后改了配置或依赖也会自动更新。
+- 程序会打开浏览器 → 登录（没填账号就等你手动登录，登录页的滑块也要手动拖）→ 按配置里的顺序逐门课播放。
+- 按 `Ctrl+C` 停止。
+
+### 5. 它会做什么
+
+- 自动播放、放完切到下一集；暂停了会自动续播。
+- 先静音，再切到播放器允许的最高倍速（这个播放器最高 1.5x）。
+- 课中弹题（不计分）自动作答并关掉；其它弹窗自动跳过。
+- 没有视频的课时（计分测验、PPT、PDF 等）**自动跳过**，课程结束时列出跳过了哪些。这些需要你自己完成，本工具不代做计分的测验。
+- 支持智慧共享课、翻转课、融合共享课，也能刷习惯分。
+
+## 二、注意事项
+
+### 运行期间
+
+- 浏览器窗口可以被别的窗口**盖住**，或者挪到另一个桌面，失焦不会打断播放。**不要最小化**，最小化后页面会变成后台状态，视频直接停，弹题也检测不到。
+- 程序运行时，别在那个浏览器窗口里动鼠标。
+- 长时间挂机可能弹出人机验证，程序检测到后会暂停，等你手动完成。
+- 命令行窗口是程序的后台，可以看运行状态；浏览器打开需要一点时间，命令行没报错退出就不用担心。
+
+### 遇到问题
+
+| 现象 | 处理 |
+| --- | --- |
+| `配置文件无效` | 配置文件被改坏了。删掉它重新运行一次入口脚本，会重新生成。配置项不要加引号 |
+| `未检测到有效网址` / 一直等待登录完成 | `URL1` 要填课程**播放页**的地址，不是课程首页 |
+| `浏览器启动失败` | 看配置里的 `driver` 是不是你装了的浏览器（`Edge` 或 `Chrome`）；装在非默认位置的，见进阶教程里的配置项 |
+| 登录时要手动拖滑块 | 默认就是这样。想自动过，见进阶教程里的 `enableAutoCaptcha` |
+| 卡在加载 / 不跳下一课 / 新版 AI 课刷不了 | 页面结构还没适配，不是配置问题。带 AI 角标的新版课程目前没适配。附上课程链接和命令行输出提 issue |
+| 弹题关不掉 / 程序卡住 | 弹题随时可能出现，检测不是实时的。先确认浏览器没有被最小化 |
+
+## 三、进阶教程
+
+### 配置项
 
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
@@ -48,23 +86,14 @@ URL2 =                 ; 多门课就往下填
 | `limitSpeed` | `max` | 切到播放器倍速菜单里最高的一档。也可填具体数字（取不超过它的最高档），`0` 则完全不碰。这个播放器只有 1.0 / 1.25 / 1.5 三档 |
 | `limitMaxTime` | `30` | 每门课最多跑多少分钟，`0` 不限 |
 | `driver` | Windows 为 `Edge`，Linux / macOS 为 `Chrome` | 用哪个浏览器。Linux 上也可以填 `Chromium`，会自动下载 |
-| `EXE_PATH` | 空 | 浏览器装在非默认位置时填它的完整路径 |
-| `enableAutoCaptcha` | Windows 模板为 `True`，Linux / macOS 为 `False` | 自动过登录滑块。开着时会多装 numpy、opencv |
-| `enableHideWindow` | `False` | 把窗口移出屏幕，只在 Windows 上有效 |
+| `EXE_PATH` | 空 | 浏览器装在非默认位置时填它的完整路径。找路径：在浏览器地址栏打开 `chrome://version`（Edge 是 `edge://version`），看"可执行文件路径" |
+| `enableAutoCaptcha` | Windows 模板为 `True`，Linux / macOS 为 `False` | 自动过登录滑块，要填了账号密码才用得上。开着时会多装 numpy、opencv |
+| `enableHideWindow` | `False` | 把窗口移出屏幕，看不见但照常播放，只在 Windows 上有效。想后台刷课用它，别最小化；报 `MoveWindow 无效的窗口句柄` 就改回 `False` |
+| `attachExistingChrome` | `False` | 连接你已经开着的 Chrome，见下一节 |
 
-配置项不要加引号。
+Linux / macOS 可以用 `./run.sh --setup` 强制重建环境。Linux 用 `Chromium` 报缺少系统库时，执行 `sudo uv run playwright install-deps chromium`。
 
-### 4. 再运行一次：开始刷课
-
-还是双击 `run.cmd`，或者执行 `./run.sh`。
-
-- 第一次会自动准备环境：uv、Python 3.13、依赖。之后改了配置或依赖也会自动更新。Linux / macOS 可以用 `./run.sh --setup` 强制重建。
-- 程序会打开浏览器 → 登录（没填账号就等你手动登录，登录页的滑块也要手动拖）→ 按配置里的顺序逐门课播放。
-- 按 `Ctrl+C` 停止。
-
-`run.cmd` 在 Windows 11 上实测跑通：生成配置、用记事本打开、`uv sync --extra captcha` 装好 Python 3.13 和依赖、用改过的参数拉起 Edge。遇到问题请把命令行窗口里的输出贴出来。
-
-### 可选：连接你已经开着的 Chrome
+### 连接你已经开着的 Chrome
 
 特征最低的方式：用的是你自己的浏览器和登录状态，没有任何启动参数痕迹。
 
@@ -84,34 +113,18 @@ URL2 =                 ; 多门课就往下填
    "%ProgramFiles%\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%USERPROFILE%\autovisor-chrome" --disable-backgrounding-occluded-windows --mute-audio
    ```
 
-   一定要加 `--mute-audio`：这个模式下程序管不到浏览器的启动参数，`soundOff` 只能去点播放器的静音按钮，视频刚开始的一两秒可能会有声音。
-
-   `--disable-backgrounding-occluded-windows` 也别漏：Windows 上不带它，窗口被别的窗口完全盖住不到 1 秒视频就停了（普通模式由 Playwright 启动浏览器，默认带着这一项）。
+   - 一定要加 `--mute-audio`：这个模式下程序管不到浏览器的启动参数，`soundOff` 只能去点播放器的静音按钮，视频刚开始的一两秒可能会有声音。
+   - `--disable-backgrounding-occluded-windows` 也别漏：Windows 上不带它，窗口被别的窗口完全盖住不到 1 秒视频就停了。
 
 2. 在这个 Chrome 里登录智慧树。
 3. 配置里改成 `attachExistingChrome = True`（`cdpUrl` 默认就是 `http://127.0.0.1:9222`）。
-4. 照第 4 步运行。
+4. 照初级教程第 4 步运行。
 
 这个模式下程序不会把 Cookie 写进 `data/cookies.json`，结束时只关闭自己打开的标签页，也不会隐藏你的窗口。用完把这个 Chrome 关掉：调试端口开着时，本机的任何程序都能控制它。
 
-### 运行期间注意
+### 只读诊断命令
 
-- 浏览器窗口可以被别的窗口**盖住**，或者挪到另一个桌面，失焦不会打断播放。**不要最小化**，最小化后页面会变成后台状态，视频直接停。Windows 上想藏起来就用 `enableHideWindow = True`。
-- Windows 上「被盖住没事」靠的是 Chrome 启动参数 `--disable-backgrounding-occluded-windows`。普通模式下 Playwright 默认就带；连接已有 Chrome 时要照上面的命令自己带。
-- 程序运行时，别在那个浏览器窗口里动鼠标。
-- 长时间挂机可能弹出人机验证，程序检测到后会暂停，等你手动完成。
-
-### 遇到问题
-
-| 现象 | 处理 |
-| --- | --- |
-| `配置文件无效` | 配置文件被改坏了。删掉它重新运行一次入口脚本，会重新生成 |
-| `未检测到有效网址` | `URL1` 要填课程**播放页**的地址，不是课程首页 |
-| `浏览器启动失败` | 检查 `driver`、`EXE_PATH`。找浏览器路径：在浏览器地址栏打开 `chrome://version`，看"可执行文件路径" |
-| Linux 用 `Chromium` 报缺少系统库 | `sudo uv run playwright install-deps chromium` |
-| 卡在加载 / 不跳下一课 / 新版 AI 课刷不了 | 页面结构还没适配。先跑下面的诊断命令，再带着输出提 issue |
-
-只读诊断命令，都会拦掉进度上报，不产生学习记录。Windows 上在命令行里把 `./run.sh` 换成 `.\run.cmd`，前面的 `.\` 不能省：
+页面改版、刷不了的时候用。都会拦掉进度上报，不产生学习记录。Windows 上在命令行里把 `./run.sh` 换成 `.\run.cmd`，前面的 `.\` 不能省：
 
 ```bash
 ./run.sh --check-browser                        # 浏览器能不能启动、有没有登录
@@ -120,89 +133,88 @@ URL2 =                 ; 多门课就往下填
 ./run.sh --check-quiz    <课程播放页地址> [--seek 秒数]   # 课中弹题结构（静音播放等弹题，不作答）
 ```
 
----
+### 上游的 Windows 发行版
 
-## 目录结构
+上游提供打包好的 `Autovisor.exe`，解压即用，但**不包含本分支的改动**。下面是上游的说明，原样保留。
 
-```
-Autovisor/
-├── README.md
-├── run.cmd                   入口（Windows）：双击运行；第一次生成配置，之后自动准备环境并运行
-├── run.sh                    入口（Linux / macOS）：同上
-├── run_macos.sh              旧入口，等同于 run.sh
-├── Autovisor.py              程序主体：读配置、开浏览器、登录、逐门课播放；--check-* 诊断也从这里进
-├── config.ini.example        配置模板：Windows
-├── config.linux.ini.example  配置模板：Linux
-├── config.macos.ini.example  配置模板：macOS
-├── pyproject.toml, uv.lock, .python-version   依赖与 Python 版本
-├── modules/                  程序本体，见下表
-├── tests/                    单元测试；test_e2e_browser.py 用真实浏览器跑
-├── data/                     运行时数据：镜像源配置 mirrors.json、登录状态 cookies.json
-├── resources/                图标、README 用的图片
-（图形界面改由统一启动器 launcher 提供，见它的 README）
-├── build.py                  打包 Windows 发行版（PyInstaller）
-├── packages/                 Windows 发行版的运行时依赖（DLL；numpy、opencv 也会下载到这里）
-└── .github/workflows/        CI：三平台单元测试 + Linux / macOS 启动脚本
-```
+#### 发行版运行
 
-`modules/` 按职责分：
+1. 请确保系统为 Windows 10 及以上.
 
-| 分组 | 文件 | 作用 |
-| --- | --- | --- |
-| 课程流程 | `course_runner.py` | 一门课的主循环：识别目录、逐个课时播放、到时限结束 |
-| | `course_playback.py` | 单个课时：播放到完成、回看 |
-| | `lesson_navigation.py` | 课程目录：各类课程的目录选择器、课时进度与完成判断 |
-| | `fusion_adapter.py` | 融合共享课：跳过弹窗、展开折叠目录 |
-| | `progress.py` | 课程进度的读取与显示 |
-| 播放器与弹题 | `tasks.py` | 播放期间的后台任务：起播与续播、静音和倍速、弹窗遮挡检测 |
-| | `player.py` | 点播放器自己的控件：倍速菜单、静音按钮、视频区域 |
-| | `quiz.py` | 课中弹题：按题型作答，点"关闭" |
-| | `video_state.py` | 视频时间相关的判断 |
-| 浏览器与输入 | `browser.py` | 启动 / 连接浏览器，启动参数 |
-| | `pointer.py` | 真实指针：贝塞尔轨迹、点击、滚轮 |
-| | `human.py` | 随机化：等待时长抖动 |
-| | `login.py` | 登录：逐字输入账号密码、勾选协议 |
-| | `slider.py` | 登录滑块自动验证（可选） |
-| 诊断 | `diagnostics.py` | `--check-browser` / `--check-course` / `--check-player` / `--check-quiz` |
-| 程序支撑 | `configs.py` | 读配置文件 |
-| | `logger.py`、`console.py`、`banner.py` | 日志与终端输出 |
-| | `utils.py` | Cookie 读写、运行目录、窗口操作等杂项 |
-| | `installer.py` | 发行版运行时依赖的下载与校验 |
-| | `updater.py`、`version.py` | 检查更新、版本号 |
-| | `support.py` | 赞赏码 |
+2. 发行版文件夹内自带 **config.ini** (可能没显示 `.ini` 后缀名), 使用 **文本编辑器** 打开.
 
-## 测试
+3. 根据文件内的注释, 填写配置文件:
 
-```bash
-uv run python -m unittest discover -s tests                         # 单元测试
-AUTOVISOR_E2E=1 uv run python -m unittest tests.test_e2e_browser -v  # 真实浏览器（会弹出窗口，期间别碰键盘）
-```
+   - 默认启动系统自带的 Edge 浏览器;
+   - 文件里的 **EXE_PATH 项** 用于自定义浏览器路径, 需要精确到**浏览器可执行文件的位置**, 可以保持默认不填;
+   - 不知道浏览器的安装路径? 见下方 **常见问题**.
+   - 确认 **保存修改** 后再退出.
 
----
+   <p align="left"><img src="resources/markdown/config_detail.png" width="600" alt="config.ini 配置说明"></p>
 
-## 功能
+4. 注意事项
 
-- **自动跳过没有视频的课时**(计分测验、PPT/PDF 等, 这些需要你自己完成)
-- **支持自动登录**
-- **自动通过登录滑块验证(可选)**
-- **自动播放和切换下一集**
-- **自动跳过弹窗和弹题**
-- **自动静音、自动切到播放器允许的最高倍速**
-- **自动检测暂停并自动续播**
-- **支持智慧共享课、翻转课、融合共享课**
-- **支持刷习惯分**
-- **支持隐藏窗口后台刷课**
-- 启动时自动检查更新
-- 后台实时更新学习进度
-- macOS / Linux 支持源码运行
-- 页面侧不留自动化痕迹: 不注入脚本, 点击、滚动、输入都是浏览器生成的真实输入 (见[降低自动化特征](#降低自动化特征))
-- 根据当前时间自动设置背景色(白天/夜晚)
-- 完成章节时提示已完成时长
-- 各种自定义配置
+   - **`config.ini` 配置项不需要加引号.**
 
-## 降低自动化特征
+   - **如果需要修改下载镜像源, 请编辑 `data/mirrors.json`**
 
-适配新版页面时先跑[只读诊断命令](#遇到问题)。被弹题或安全验证的弹窗挡住时, 播放器调节会跳过这一轮再等, 不去硬点被遮住的控件 (否则必然失败并退回写属性).
+5. 运行 **Autovisor.exe**, 会自动打开浏览器, 进入网课界面后就能自动刷课了!
+
+   (如果未设置 **enableAutoCaptcha=True**, 则需要**手动完成**登录时的滑块验证)
+
+**发行版目录说明:**
+
+- `resources/`: 图片、脚本等程序资源.
+- `packages/`: 自动下载的 NumPy、OpenCV 等运行时依赖.
+- `data/`: 登录 Cookies 和镜像源配置.
+
+#### 发行版下载
+
+- Github: [Releases · CXRunfree/Autovisor](https://github.com/CXRunfree/Autovisor/releases)
+- 网盘备用: [蓝奏云 · Autovisor-for-windows](https://wwk.lanzouj.com/b05evsxif) 密码: 492l
+
+这是已经打包好的程序, 若需要**源代码**请于 Github 项目主页下载.
+
+#### 发行版常见问题
+
+1. 解压后没有 `Autovisor.exe` / 提示缺少依赖文件?
+
+   - 多为杀毒软件误杀: 加入信任区后重新解压; 也请确认下载的是 Releases 里的发行包, 而不是源码.
+
+2. 第一次启动很久没反应 / 依赖下载失败?
+
+   - 首次会检查并下载运行时依赖 (numpy、opencv-python), 等后台日志跑完即可; 下载失败会自动换用 `data/mirrors.json` 里的下一个镜像.
+   - 报 `ModuleNotFoundError` / `ImportError: numpy...` 时, 删掉 `packages/` 目录重新运行.
+
+3. 只出现命令行窗口, 没有浏览器界面?
+
+   - 报错通常是浏览器路径配置有误. 找浏览器路径: 打开浏览器, 地址栏输入 `chrome://version`, 其中的"可执行文件目录"就是.
+
+   <p align="left"><img src="resources/markdown/broswer_version.png" width="720" alt="Chrome 可执行文件目录"></p>
+
+#### 上游更新记录
+
+**本次更新:**
+
+- 新增融合共享支持: 自动跳过弹窗、展开折叠目录、关闭弹窗后恢复播放, 并读取课时真实进度 ([#158](https://github.com/CXRunfree/Autovisor/pull/158)).
+
+**近期更新:**
+
+- 修复课程页卡死: 已读的"学前必读"弹窗是隐藏节点, 等它可见会一直等下去, 现在超时即跳过 ([#155](https://github.com/CXRunfree/Autovisor/pull/155)).
+- 课时切换、目录识别的等待也加上超时, 异常页面不再长时间卡住.
+- 支持 Python 3.13.
+
+## 四、有价值的技术细节
+
+### 为什么可以被盖住、但不能最小化
+
+- 失焦靠焦点模拟兜住，但 `document.visibilityState` 没有办法模拟：最小化后页面变成 `hidden`，视频随之暂停，弹题检测也跟着停。
+- Windows 上还多一种情况：浏览器会追踪窗口有没有被盖住。实测（Chrome 155 / Win11）窗口被别的窗口完全盖住后 1 秒内页面就变 `hidden`，视频被直接暂停。启动参数 `--disable-backgrounding-occluded-windows` 能让它被盖住时保持 `visible`，但兜不住最小化。
+- 普通模式由 Playwright 启动浏览器，它默认就带这一项（`tests/test_browser.py` 里有测试防止它被去掉）；连接已有 Chrome 时程序管不到启动参数，所以要在手动命令里自己带。
+
+### 降低自动化特征
+
+适配新版页面时先跑[只读诊断命令](#只读诊断命令)。被弹题或安全验证的弹窗挡住时, 播放器调节会跳过这一轮再等, 不去硬点被遮住的控件 (否则必然失败并退回写属性).
 
 以下每一项都在真实浏览器里实测过 (`tests/test_e2e_browser.py`):
 
@@ -286,7 +298,7 @@ div#playTopic-dialog.el-dialog__wrapper.dialog-test    弹题弹窗, 有唯一 i
 - **关闭弹窗一直是失败的.** 页面上同时有 12 个 `.el-dialog` (AI 助教、异常提示等, 大多隐藏), `page.press(".el-dialog", ...)` 命中的是第一个隐藏的"温馨提示", 所以一直超时 —— 日志里那条 `答题模块轮询未命中(元素 .el-scrollbar__view/.el-dialog): TimeoutError` 就是它. 现在点弹题弹窗自己的"关闭"按钮.
 - **`.answer` 的判断扫的是全页**, 别的隐藏弹窗里也有 `.answer`. 现在收窄到当前 `.topic` 内.
 
-作答改成: 读 `.title-tit` 判断题型, 单选选一个、多选选两个以上但不全选 (全选会变成新的固定模式), 带 2.5~7 秒读题停顿, 点击走指针轨迹, 约 18% 概率改一次主意. 依旧不尝试答对.
+作答改成: 读 `.title-tit` 判断题型, 单选选一个、多选选两个以上但不全选 (全选会变成新的固定模式), 带读题停顿, 点击走指针轨迹, 约 18% 概率改一次主意. 依旧不尝试答对.
 
 还没处理的:
 
@@ -294,127 +306,73 @@ div#playTopic-dialog.el-dialog__wrapper.dialog-test    弹题弹窗, 有唯一 i
 - 几个提示浮层 (`.exploreTip` 等) 仍是直接从页面里删掉.
 - 题号是 Element UI 分页器, 题目很多时分页器会把页码折叠成 `...`, 这时 `li.number` 的数量不等于总题数. 实测遇到的弹题都只有 1 道, 多题情况没验证过.
 
-**连接已有 Chrome (`attachExistingChrome = True`)** 这个开关在 3.18.x 里只对 `--check-browser` 生效, 正式运行时被忽略 (合并 #149 时丢失), 现已恢复. 用法见[快速开始](#可选连接你已经开着的-chrome).
+**连接已有 Chrome (`attachExistingChrome = True`)** 这个开关在 3.18.x 里只对 `--check-browser` 生效, 正式运行时被忽略 (合并 #149 时丢失), 现已恢复. 用法见[连接你已经开着的 Chrome](#连接你已经开着的-chrome).
+
+### 目录结构
+
+```
+Autovisor/
+├── README.md
+├── run.cmd                   入口（Windows）：双击运行；第一次生成配置，之后自动准备环境并运行
+├── run.sh                    入口（Linux / macOS）：同上
+├── run_macos.sh              旧入口，等同于 run.sh
+├── Autovisor.py              程序主体：读配置、开浏览器、登录、逐门课播放；--check-* 诊断也从这里进
+├── config.ini.example        配置模板：Windows
+├── config.linux.ini.example  配置模板：Linux
+├── config.macos.ini.example  配置模板：macOS
+├── pyproject.toml, uv.lock, .python-version   依赖与 Python 版本
+├── modules/                  程序本体，见下表
+├── tests/                    单元测试；test_e2e_browser.py 用真实浏览器跑
+├── data/                     运行时数据：镜像源配置 mirrors.json、登录状态 cookies.json
+├── resources/                图标、README 用的图片
+├── build.py                  打包 Windows 发行版（PyInstaller）
+├── packages/                 Windows 发行版的运行时依赖（DLL；numpy、opencv 也会下载到这里）
+└── .github/workflows/        CI：三平台单元测试 + Linux / macOS 启动脚本
+```
+
+上游的图形界面 `GUI.py` 已删除，改由统一启动器（launcher）提供。
+
+`modules/` 按职责分：
+
+| 分组 | 文件 | 作用 |
+| --- | --- | --- |
+| 课程流程 | `course_runner.py` | 一门课的主循环：识别目录、逐个课时播放、到时限结束 |
+| | `course_playback.py` | 单个课时：播放到完成、回看 |
+| | `lesson_navigation.py` | 课程目录：各类课程的目录选择器、课时进度与完成判断 |
+| | `fusion_adapter.py` | 融合共享课：跳过弹窗、展开折叠目录 |
+| | `progress.py` | 课程进度的读取与显示 |
+| 播放器与弹题 | `tasks.py` | 播放期间的后台任务：起播与续播、静音和倍速、弹窗遮挡检测 |
+| | `player.py` | 点播放器自己的控件：倍速菜单、静音按钮、视频区域 |
+| | `quiz.py` | 课中弹题：按题型作答，点"关闭" |
+| | `video_state.py` | 视频时间相关的判断 |
+| 浏览器与输入 | `browser.py` | 启动 / 连接浏览器，启动参数 |
+| | `pointer.py` | 真实指针：贝塞尔轨迹、点击、滚轮 |
+| | `human.py` | 随机化：等待时长抖动 |
+| | `login.py` | 登录：逐字输入账号密码、勾选协议 |
+| | `slider.py` | 登录滑块自动验证（可选） |
+| 诊断 | `diagnostics.py` | `--check-browser` / `--check-course` / `--check-player` / `--check-quiz` |
+| 程序支撑 | `configs.py` | 读配置文件 |
+| | `logger.py`、`console.py`、`banner.py` | 日志与终端输出 |
+| | `utils.py` | Cookie 读写、运行目录、窗口操作等杂项 |
+| | `installer.py` | 发行版运行时依赖的下载与校验 |
+| | `updater.py`、`version.py` | 检查更新、版本号 |
+| | `support.py` | 赞赏码 |
+
+### 测试
+
+```bash
+uv run python -m unittest discover -s tests                         # 单元测试
+AUTOVISOR_E2E=1 uv run python -m unittest tests.test_e2e_browser -v  # 真实浏览器（会弹出窗口，期间别碰键盘）
+```
+
+`run.cmd` 在 Windows 11 上实测跑通过：生成配置、用记事本打开、`uv sync --extra captcha` 装好 Python 3.13 和依赖、用改过的参数拉起 Edge。
 
 ---
 
-## 上游的 Windows 发行版
-
-上游提供打包好的 `Autovisor.exe`，解压即用，但**不包含本分支的改动**。下面是上游的说明，原样保留。
-
-### 发行版运行
-
-1. 请确保系统为 Windows 10 及以上.
-
-2. 发行版文件夹内自带 **config.ini** (可能没显示 `.ini` 后缀名), 使用 **文本编辑器** 打开.
-
-3. 根据文件内的注释, 填写配置文件:
-
-   - 默认启动系统自带的 Edge 浏览器;
-   - 文件里的 **EXE_PATH 项** 用于自定义浏览器路径, 需要精确到**浏览器可执行文件的位置**, 可以保持默认不填;
-   - 不知道浏览器的安装路径? 见下方 **常见问题**.
-   - 确认 **保存修改** 后再退出.
-
-   <p align="left"><img src="resources/markdown/config_detail.png" width="600" alt="config.ini 配置说明"></p>
-
-4. 注意事项
-
-   - **`config.ini` 配置项不需要加引号.**
-
-   - **如果需要修改下载镜像源, 请编辑 `data/mirrors.json`**
-
-5. 运行 **Autovisor.exe**, 会自动打开浏览器, 进入网课界面后就能自动刷课了!
-
-   (如果未设置 **enableAutoCaptcha=True**, 则需要**手动完成**登录时的滑块验证)
-
-**发行版目录说明:**
-
-- `resources/`: 图片、脚本等程序资源.
-- `packages/`: 自动下载的 NumPy、OpenCV 等运行时依赖.
-- `data/`: 登录 Cookies 和镜像源配置.
-
-### 发行版下载
-
-- Github: [Releases · CXRunfree/Autovisor](https://github.com/CXRunfree/Autovisor/releases)
-- 网盘备用: [蓝奏云 · Autovisor-for-windows](https://wwk.lanzouj.com/b05evsxif) 密码: 492l
-
-这是已经打包好的程序, 若需要**源代码**请于 Github 项目主页下载.
-
-## 常见问题
-
-1. 解压后没有 `Autovisor.exe` / 提示缺少依赖文件?
-
-   - 多为杀毒软件误杀: 加入信任区后重新解压; 也请确认下载的是 Releases 里的发行包, 而不是源码.
-
-2. 第一次启动很久没反应 / 依赖下载失败?
-
-   - 首次会检查并下载运行时依赖 (numpy、opencv-python), 等后台日志跑完即可; 下载失败会自动换用 `data/mirrors.json` 里的下一个镜像.
-   - 报 `ModuleNotFoundError` / `ImportError: numpy...` 时, 删掉 `packages/` 目录重新运行.
-
-3. 提示 **未检测到有效网址** / 一直**等待登录完成** ?
-
-   - `[course-url]` 要填**课程播放页**的地址 (能直接看到课程视频的页面), 不要填课程首页.
-   - 登录页改版导致的等待已在最新版修复, 请先更新到最新版本.
-
-4. 登录时还是要手动过滑块?
-
-   - 只有 `enableAutoCaptcha = True` 才会自动过滑块, 否则需要手动完成.
-
-5. 只出现命令行窗口, 没有浏览器界面?
-
-   - 命令行是程序后台, 可以查看运行状态; 浏览器加载需要时间, 后台没异常退出就不必担心. 报错通常是浏览器路径配置有误.
-   - 找浏览器路径: 打开浏览器, 地址栏输入 `chrome://version`, 其中的"可执行文件目录"就是.
-
-   <p align="left"><img src="resources/markdown/broswer_version.png" width="720" alt="Chrome 可执行文件目录"></p>
-
-6. 看不到浏览器窗口 / 想后台刷课 / 报 `MoveWindow 无效的窗口句柄`?
-
-   - 最小化会让浏览器暂停渲染, 进度不增加, 也会影响弹题检测. 想后台刷课请用 `enableHideWindow = True`, 程序会把窗口移出屏幕.
-   - 若报窗口句柄错误, 改回 `enableHideWindow = False`.
-
-7. 卡在加载播放页 / 不会自动跳下一课 / 新版页面刷不了课?
-
-   - 这类基本都是**页面结构还没适配**, 不是配置问题. 目前支持: 智慧共享课、翻转课、融合共享课.
-
-   - 智慧树新版 **AI 课程** (带 AI 角标的课程) 尚未适配, 表现就是识别不到课时、停在加载中或单个视频无限循环; 需要等待适配
-
-     欢迎附上课程链接和日志提 issue.
-
-8. 弹题关不掉 / 程序卡住?
-
-   - 弹题随时可能出现, 而检测不是实时的, 所以无法完全消除; 页面长时间无响应时, 先确认浏览器没有被最小化.
-
-9. 遇到 PPT、PDF、计分测验等没有视频的章节会怎样?
-
-   - 自动跳过, 继续学下一个有视频的课时, 课程结束时会列出跳过了哪些。
-     这些需要你自己完成——本工具只负责视频和课中弹题, 不代做计分的测验。
-
-## 已知问题
-
-- **长时间挂机**有概率弹出人机验证, 程序检测到后会暂停操作, 直到手动验证完成;
-- 浏览器窗口若**最小化**可能导致视频播放进度不增加 (页面会变成后台状态);
-- 若出现其他异常崩溃, 请提交 issue 并附上报错信息.
-
-## 上游更新记录
-
-**本次更新:**
-
-- 新增融合共享支持: 自动跳过弹窗、展开折叠目录、关闭弹窗后恢复播放, 并读取课时真实进度 ([#158](https://github.com/CXRunfree/Autovisor/pull/158)).
-
-**近期更新:**
-
-- 修复课程页卡死: 已读的"学前必读"弹窗是隐藏节点, 等它可见会一直等下去, 现在超时即跳过 ([#155](https://github.com/CXRunfree/Autovisor/pull/155)).
-- 课时切换、目录识别的等待也加上超时, 异常页面不再长时间卡住.
-- 支持 Python 3.13.
-
-## 写在最后
-
-觉得体验还不错? 请留下你宝贵的 Star ⭐, 并分享给更多有需要的人!
-
-或者为项目发电支持一下~
+觉得体验还不错? 请给上游项目留下你宝贵的 Star ⭐, 并分享给更多有需要的人! 或者为项目发电支持一下~
 
 <p align="left"><img src="resources/markdown/donate.png" width="200" alt="赞赏码"></p>
 
-**作者的 CSDN:** [欢迎关注~](https://blog.csdn.net/Runfreeone)
+**上游作者的 CSDN:** [欢迎关注~](https://blog.csdn.net/Runfreeone)
 
 **声明：本程序只可用于学习和研究计算机原理, 请于 24h 内删除所有存档！**
